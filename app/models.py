@@ -147,4 +147,7 @@ KNOWN_ACTIONS: list[str] = [
     "parkour_jail", "parkour_reset", "parkour_antireset",
     "parkour_speed", "parkour_slow", "parkour_blind", "parkour_jump",
     "parkour_shield", "parkour_cleanse",
+    "dropper_push", "dropper_level_forward", "dropper_level_back", "dropper_reset",
+    "dropper_speed", "dropper_slow", "dropper_blind", "dropper_jump",
+    "dropper_shield", "dropper_cleanse",
 ]

@@ -85,6 +85,7 @@ class ParkourSetupRequest(BaseModel):
     player: str
     eula_accepted: bool = False
     version: str = "latest"
+    game_mode: Literal["parkour", "dropper"] = "parkour"
 
 
 class ParkourActionRequest(BaseModel):
@@ -107,7 +108,7 @@ async def publish_game_action(action: GameAction) -> None:
     diagnostics.info("Dopasowano regułę '%s': akcja '%s'%s.",
                      action.rule_name or "(bez nazwy)", action.action, trigger_hint)
     await hub.publish_action(action)
-    if action.action.startswith("parkour_"):
+    if action.action.startswith(("parkour_", "dropper_")):
         try:
             await _run_parkour_action(action)
         except Exception as exc:
@@ -196,7 +197,7 @@ async def _run_parkour_action(action: GameAction) -> None:
         parkour_jail_tasks[player] = asyncio.create_task(release_jail())
         await hub.publish_status({"parkour_result": result, "parkour_jail_seconds": 20})
         return
-    if action.action.startswith("parkour_"):
+    if action.action.startswith(("parkour_", "dropper_")):
         result = await asyncio.to_thread(parkour_server.execute_action, action.action, player)
         await hub.publish_status({"parkour_result": result})
 
@@ -358,14 +359,15 @@ async def startup() -> None:
         diagnostics.info("Wyłączono dawny tryb symulatora; GiftStream czeka na ręczne połączenie TikTok LIVE.")
     if config.tiktok_username:
         connector.username = config.tiktok_username
-    parkour_game = get_game("minecraft-parkour")
-    if parkour_game and preset_store.get_preset(parkour_game["preset_id"]) is None:
-        preset_store.save_preset(Preset(id=parkour_game["preset_id"], name=parkour_game["title"],
-                                        description=parkour_game["description"], rules=parkour_game["rules"]))
-    if parkour_game and config.active_preset_id != parkour_game["preset_id"]:
-        config.active_preset_id = parkour_game["preset_id"]
-        save_config()
+    for game_id in ("minecraft-parkour", "minecraft-dropper"):
+        game = get_game(game_id)
+        if game and preset_store.get_preset(game["preset_id"]) is None:
+            preset_store.save_preset(Preset(id=game["preset_id"], name=game["title"],
+                                            description=game["description"], rules=game["rules"]))
     _migrate_builtin_parkour_preset()
+    if config.active_preset_id not in preset_store.PRESET_IDS:
+        config.active_preset_id = "minecraft-parkour"
+        save_config()
     engine.load_preset(config.active_preset_id)
     diagnostics.info("Załadowano preset '%s'; tryb źródła: %s.", config.active_preset_id, config.mode)
     # TikTok's public catalog is loaded once in the background; the panel remains usable offline.
@@ -718,7 +720,7 @@ async def parkour_status() -> dict[str, Any]:
 @app.post("/api/minecraft/parkour/setup")
 async def parkour_setup(req: ParkourSetupRequest) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(parkour_server.setup, req.server_dir, req.player, req.eula_accepted, req.version)
+        return await asyncio.to_thread(parkour_server.setup, req.server_dir, req.player, req.eula_accepted, req.version, req.game_mode)
     except (ValueError, FileExistsError) as exc:
         diagnostics.warning("Konfiguracja Minecraft została odrzucona: %s", exc)
         raise HTTPException(400, str(exc)) from exc
@@ -748,10 +750,7 @@ async def parkour_enabled(request: dict[str, bool]) -> dict[str, Any]:
     if not state.get("server_dir"):
         raise HTTPException(400, "Najpierw skonfiguruj lokalny serwer parkour.")
     state["enabled"] = bool(request.get("enabled", False))
-    path = DATA / "minecraft_parkour.json"
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    await asyncio.to_thread(parkour_server.save_settings, state)
     diagnostics.info("Sterowanie zdarzeniami w lokalnym Parkour %s.", "włączono" if state["enabled"] else "wyłączono")
     return {**await asyncio.to_thread(parkour_server.status),
             "enabled": state["enabled"],
@@ -763,21 +762,20 @@ async def parkour_chat_relay(req: ParkourChatRelayRequest) -> dict[str, Any]:
     if not state.get("server_dir"):
         raise HTTPException(400, "Najpierw skonfiguruj lokalny serwer parkour.")
     state["chat_relay_enabled"] = req.enabled
-    path = DATA / "minecraft_parkour.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    await asyncio.to_thread(parkour_server.save_settings, state)
     diagnostics.info("Przekazywanie komentarzy LIVE do Minecraft %s.", "włączono" if req.enabled else "wyłączono")
     return {"ok": True, "chat_relay_enabled": req.enabled}
 
 @app.post("/api/minecraft/parkour/action")
 async def parkour_test_action(req: ParkourActionRequest) -> dict[str, Any]:
-    allowed = {"parkour_push", "parkour_level_forward", "parkour_level_back", "parkour_jail", "parkour_reset", "parkour_antireset", "parkour_speed", "parkour_slow", "parkour_blind", "parkour_jump", "parkour_shield", "parkour_cleanse"}
-    if req.action not in allowed:
-        raise HTTPException(400, "Nieznana akcja parkour.")
+    from .models import KNOWN_ACTIONS
+    state = parkour_server.settings()
+    mode = state.get("game_mode", "parkour")
+    prefix = "dropper_" if mode == "dropper" else "parkour_"
+    if req.action not in KNOWN_ACTIONS or not req.action.startswith(prefix):
+        raise HTTPException(400, f"Akcja nie pasuje do aktywnego trybu {mode}.")
     await _run_parkour_action(GameAction(action=req.action, params={"player": req.player} if req.player else {}))
-    return {"ok": True, "message": f"Akcja parkour wysłana: {req.action}"}
+    return {"ok": True, "message": f"Akcja {mode} wysłana: {req.action}"}
 
 @app.get("/api/actions")
 async def actions() -> list[dict]:
@@ -795,18 +793,27 @@ async def actions() -> list[dict]:
         "parkour_jump": "Parkour: wysoki skok · 4 s",
         "parkour_shield": "Parkour: tarcza · 6 s",
         "parkour_cleanse": "Parkour: usuń negatywne efekty",
+        "dropper_push": "Dropper: push",
+        "dropper_level_forward": "Dropper: wyższy poziom",
+        "dropper_level_back": "Dropper: niższy poziom",
+        "dropper_reset": "Dropper: powrót na start",
+        "dropper_speed": "Dropper: sprint · 8 s",
+        "dropper_slow": "Dropper: spowolnienie · 7 s",
+        "dropper_blind": "Dropper: ciemność · 4 s",
+        "dropper_jump": "Dropper: wysoki skok",
+        "dropper_shield": "Dropper: tarcza · 6 s",
+        "dropper_cleanse": "Dropper: usuń negatywne efekty",
     }
     return [{"id": action, "label": labels[action]} for action in KNOWN_ACTIONS]
 
 @app.get("/api/presets")
 async def list_presets() -> list[dict]:
-    # Show only the supported Minecraft Parkour flow, not legacy game presets.
-    preset = preset_store.get_preset("minecraft-parkour")
-    return [preset.model_dump()] if preset else []
+    return [preset.model_dump() for preset_id in sorted(preset_store.PRESET_IDS)
+            if (preset := preset_store.get_preset(preset_id)) is not None]
 
 @app.get("/api/presets/{preset_id}")
 async def get_preset(preset_id: str) -> dict:
-    if preset_id != "minecraft-parkour":
+    if preset_id not in preset_store.PRESET_IDS:
         raise HTTPException(404, "Nie znaleziono presetu")
     p = preset_store.get_preset(preset_id)
     if p is None:
@@ -815,7 +822,7 @@ async def get_preset(preset_id: str) -> dict:
 
 @app.put("/api/presets/{preset_id}")
 async def update_preset(preset_id: str, preset: Preset) -> dict:
-    if preset_id != "minecraft-parkour":
+    if preset_id not in preset_store.PRESET_IDS:
         raise HTTPException(404, "Nie znaleziono presetu")
     if preset.id != preset_id:
         raise HTTPException(400, "ID w URL i body muszą być takie same")
@@ -827,7 +834,7 @@ async def update_preset(preset_id: str, preset: Preset) -> dict:
 
 @app.post("/api/presets/{preset_id}/activate")
 async def activate_preset(preset_id: str) -> dict:
-    if preset_id != "minecraft-parkour":
+    if preset_id not in preset_store.PRESET_IDS:
         raise HTTPException(404, "Nie znaleziono presetu")
     preset = engine.load_preset(preset_id)
     if preset is None:

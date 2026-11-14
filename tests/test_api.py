@@ -151,19 +151,23 @@ def test_parkour_test_endpoint_accepts_new_actions_but_not_arbitrary_commands(mo
         seen.append(action.action)
 
     monkeypatch.setattr(main, "_run_parkour_action", capture)
+    monkeypatch.setattr(main.parkour_server, "settings", lambda: {"game_mode": "parkour"})
     client = TestClient(main.app)
     assert client.post("/api/minecraft/parkour/action", json={"action": "parkour_jump"}).status_code == 200
     assert seen == ["parkour_jump"]
+    assert client.post("/api/minecraft/parkour/action", json={"action": "dropper_reset"}).status_code == 400
     assert client.post("/api/minecraft/parkour/action", json={"action": "op @a"}).status_code == 400
 
 
-def test_supported_actions_are_limited_to_parkour():
+def test_supported_actions_are_limited_to_built_in_minecraft_modes():
     response = TestClient(main.app).get("/api/actions")
     assert response.status_code == 200
     assert {item["id"] for item in response.json()} == {
         "parkour_push", "parkour_level_forward", "parkour_level_back",
         "parkour_jail", "parkour_reset", "parkour_antireset", "parkour_speed",
         "parkour_slow", "parkour_blind", "parkour_jump", "parkour_shield", "parkour_cleanse",
+        "dropper_push", "dropper_level_forward", "dropper_level_back", "dropper_reset",
+        "dropper_speed", "dropper_slow", "dropper_blind", "dropper_jump", "dropper_shield", "dropper_cleanse",
     }
 
 
@@ -318,6 +322,8 @@ def test_rule_editor_has_searchable_gift_picker_and_audio_upload_controls():
     assert 'id="upload-sound"' in page
     assert 'id="parkour-test-action"' in page
     assert 'id="parkour-test-button"' in page
+    assert 'id="parkour-game-mode"' in page
+    assert 'Minecraft Dropper · 5 szybów' in page
 
 
 def test_gift_library_search_passes_the_name_query_to_the_catalog(monkeypatch):
@@ -327,3 +333,16 @@ def test_gift_library_search_passes_the_name_query_to_the_catalog(monkeypatch):
     assert response.status_code == 200
     assert response.json() == [{"name": "Galaxy"}]
     assert calls == [("galaxy", "popular")]
+
+
+def test_dropper_preset_is_persisted_separately_from_parkour(monkeypatch, tmp_path):
+    from app import presets
+
+    monkeypatch.setattr(presets, "PRESETS_DIR", tmp_path)
+    game = main.get_game("minecraft-dropper")
+    dropper = Preset(id=game["preset_id"], name=game["title"],
+                     description=game["description"], rules=[Rule(**rule) for rule in game["rules"]])
+    presets.save_preset(dropper)
+    assert (tmp_path / "minecraft-dropper.json").is_file()
+    assert presets.get_preset("minecraft-dropper").rules[0].action.type == "dropper_push"
+    assert presets.get_preset("minecraft-parkour") is None

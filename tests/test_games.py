@@ -2,8 +2,8 @@ from app.games import GAMES, get_game
 from app.models import Preset
 
 
-def test_only_supported_minecraft_parkour_game_is_exposed():
-    assert [game["id"] for game in GAMES] == ["minecraft-parkour"]
+def test_only_supported_minecraft_modes_are_exposed():
+    assert [game["id"] for game in GAMES] == ["minecraft-parkour", "minecraft-dropper"]
     assert get_game("minecraft-survival") is None
     assert get_game("giftstream-zombie-arena") is None
     assert get_game("minecraft-parkour")["integration"] == "GiftStream Local Minecraft"
@@ -18,3 +18,8 @@ def test_only_supported_minecraft_parkour_game_is_exposed():
     game = get_game("minecraft-parkour")
     preset = Preset(id=game["preset_id"], name=game["title"], rules=game["rules"])
     assert preset.rules
+    dropper = get_game("minecraft-dropper")
+    assert dropper["integration"] == "GiftStream Local Minecraft"
+    dropper_actions = {rule["action"]["type"] for rule in dropper["rules"]}
+    assert {"dropper_push", "dropper_level_forward", "dropper_level_back", "dropper_reset"}.issubset(dropper_actions)
+    assert Preset(id=dropper["preset_id"], name=dropper["title"], rules=dropper["rules"]).rules

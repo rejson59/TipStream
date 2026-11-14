@@ -39,10 +39,21 @@ _SERVER_STARTUP_GRACE_SEC = 8.0
 
 
 def _write_parkour_settings(state: dict[str, Any]) -> None:
+    payload = json.dumps(state, ensure_ascii=False, indent=2)
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     temporary = SETTINGS_PATH.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.write_text(payload, encoding="utf-8")
     os.replace(temporary, SETTINGS_PATH)
+    server_dir = str(state.get("server_dir", ""))
+    if server_dir:
+        try:
+            root = Path(server_dir).resolve()
+            snapshot = root / ".giftstream-state.json"
+            staged = root / ".giftstream-state.json.tmp"
+            staged.write_text(payload, encoding="utf-8")
+            os.replace(staged, snapshot)
+        except OSError as exc:
+            diagnostics.warning("Nie udało się zapisać kopii ustawień świata Minecraft: %s", exc)
 
 
 def _map_archive() -> Path:
@@ -586,9 +597,19 @@ class ParkourServer:
     def settings(self) -> dict[str, Any]:
         try:
             value = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) else {}
+            if not isinstance(value, dict):
+                return {}
+            if value.get("server_dir") and "game_mode" not in value:
+                # Migrate existing Parkour installs before users create/switch modes,
+                # preserving their RCON credentials and world location per server.
+                value["game_mode"] = "parkour"
+                _write_parkour_settings(value)
+            return value
         except (OSError, ValueError, TypeError):
             return {}
+
+    def save_settings(self, state: dict[str, Any]) -> None:
+        _write_parkour_settings(state)
 
     def _server_log_path(self) -> Path | None:
         server_dir = str(self.settings().get("server_dir", ""))
@@ -621,24 +642,30 @@ class ParkourServer:
         except OSError as exc:
             diagnostics.warning("Nie udało się wyczyścić pliku logu Minecraft %s: %s", log_path, exc)
 
-    def setup(self, server_dir: str, player: str, eula_accepted: bool, version: str = "latest") -> dict[str, Any]:
+    def setup(self, server_dir: str, player: str, eula_accepted: bool, version: str = "latest",
+              game_mode: str = "parkour") -> dict[str, Any]:
         if not eula_accepted:
             raise ValueError("Zaznacz akceptację EULA Minecraft przed utworzeniem serwera.")
         if not PLAYER_RE.fullmatch(player or ""):
             raise ValueError("Wpisz nick Minecraft: 3–16 liter, cyfr lub podkreśleń.")
+        if game_mode not in {"parkour", "dropper"}:
+            raise ValueError("Nieobsługiwany tryb Minecraft.")
         selected_version, _version_info = _resolve_release(version)
         if server_dir.strip():
             root = Path(server_dir).expanduser().resolve()
         else:
-            root = (data_dir() / "MinecraftParkour" / "servers" / selected_version).resolve()
+            folder = "MinecraftDropper" if game_mode == "dropper" else "MinecraftParkour"
+            root = (data_dir() / folder / "servers" / selected_version).resolve()
         if root == Path(root.anchor) or root == data_dir().resolve():
             raise ValueError("Wybierz osobny folder na lokalny serwer Minecraft.")
         state = self.settings()
         if self._process is not None and self._process.poll() is None:
-            if state.get("server_dir") != str(root) or state.get("minecraft_version") != selected_version:
-                raise RuntimeError("Zatrzymaj działający serwer przed przełączeniem wersji Minecraft.")
+            if (state.get("server_dir") != str(root) or state.get("minecraft_version") != selected_version
+                    or state.get("game_mode", "parkour") != game_mode):
+                raise RuntimeError("Zatrzymaj działający serwer przed przełączeniem trybu lub wersji Minecraft.")
             return self.status()
-        if state and (state.get("server_dir") != str(root) or state.get("minecraft_version") != selected_version):
+        if state and (state.get("server_dir") != str(root) or state.get("minecraft_version") != selected_version
+                      or state.get("game_mode", "parkour") != game_mode):
             try:
                 self._rcon("list", log_failure=False)
             except Exception:
@@ -646,9 +673,29 @@ class ParkourServer:
             else:
                 raise RuntimeError("Wykryto działający serwer w tle. Zatrzymaj go przed przełączeniem wersji, aby nie utracić kontroli RCON.")
         root.mkdir(parents=True, exist_ok=True)
+        if (state.get("server_dir") != str(root) or state.get("minecraft_version") != selected_version
+                or state.get("game_mode", "parkour") != game_mode):
+            snapshot = root / ".giftstream-state.json"
+            try:
+                saved_state = json.loads(snapshot.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                saved_state = {}
+            world_ready = game_mode == "dropper" or (root / "world" / "level.dat").is_file()
+            if (saved_state.get("server_dir") == str(root)
+                    and saved_state.get("minecraft_version") == selected_version
+                    and saved_state.get("game_mode", "parkour") == game_mode
+                    and (root / "server.jar").is_file() and (root / "eula.txt").is_file() and world_ready):
+                _write_parkour_settings(saved_state)
+                if game_mode == "parkour":
+                    _patch_map_datapack(root / "world")
+                diagnostics.info("Przywrócono zapisany serwer Minecraft %s z jego katalogu świata.", game_mode)
+                self.start()
+                return self.status()
         if (state.get("server_dir") == str(root) and state.get("minecraft_version") == selected_version
-                and (root / "server.jar").is_file() and (root / "world" / "level.dat").is_file()):
-            _patch_map_datapack(root / "world")
+                and state.get("game_mode", "parkour") == game_mode and (root / "server.jar").is_file()
+                and (game_mode == "dropper" or (root / "world" / "level.dat").is_file())):
+            if game_mode == "parkour":
+                _patch_map_datapack(root / "world")
             self.start()
             return self.status()
         if any(root.iterdir()):
@@ -656,42 +703,45 @@ class ParkourServer:
 
         password = secrets.token_urlsafe(24)
         map_stage = root / ".giftstream-world-stage"
-        phase = "sprawdzanie dołączonej mapy"
-        diagnostics.info("Rozpoczynam konfigurację Minecraft Parkour %s dla gracza %s w %s.",
-                         selected_version, player, root)
+        phase = "sprawdzanie mapy"
+        diagnostics.info("Rozpoczynam konfigurację Minecraft %s (%s) dla gracza %s w %s.",
+                         game_mode, selected_version, player, root)
         try:
-            _map_archive()  # Fail before downloading server files if the bundled world is absent.
+            if game_mode == "parkour":
+                _map_archive()  # Fail before downloading server files if the bundled world is absent.
             phase = "pobieranie serwera i przygotowanie Java"
             diagnostics.info("Pobieram oficjalny serwer Minecraft %s i sprawdzam wymagania Java.", selected_version)
             jar, required_java, installed_version, java_executable = _download_server_jar(root, selected_version)
             diagnostics.info("Serwer pobrany i zweryfikowany; używam Java %s (%s).", required_java, java_executable)
-            phase = "rozpakowywanie mapy"
-            map_stage.mkdir()
-            _extract_map(_map_archive(), map_stage)
-            _patch_map_datapack(map_stage)
-            diagnostics.info("Datapack mapy zaktualizowano pod Minecraft 26.3; HUD poziomu zachowuje istniejący timer.")
-            staged_level = map_stage / "level.dat"
-            if not staged_level.is_file():
-                raise FileNotFoundError(f"Po rozpakowaniu mapy brakuje pliku {staged_level}.")
-            # _extract_map deliberately strips the archive's top-level '100 Levels/' folder.
-            # The staging directory itself is the complete world root.
-            os.replace(map_stage, root / "world")
-            diagnostics.info("Mapa 100 Levels rozpakowana i zainstalowana jako %s/world.", root)
+            if game_mode == "parkour":
+                phase = "rozpakowywanie mapy Parkour"
+                map_stage.mkdir()
+                _extract_map(_map_archive(), map_stage)
+                _patch_map_datapack(map_stage)
+                staged_level = map_stage / "level.dat"
+                if not staged_level.is_file():
+                    raise FileNotFoundError(f"Po rozpakowaniu mapy brakuje pliku {staged_level}.")
+                os.replace(map_stage, root / "world")
+                diagnostics.info("Mapa 100 Levels rozpakowana i zainstalowana jako %s/world.", root)
+            else:
+                diagnostics.info("Dropper Arena zostanie wygenerowana w vanilla world przez kontrolowane komendy RCON po starcie.")
             phase = "zapisywanie konfiguracji serwera"
             (root / "eula.txt").write_text("# Accepted in GiftStream setup\neula=true\n", encoding="ascii")
             _write_server_properties(root / "server.properties", password)
             state = {"server_dir": str(root), "player": player,
                      "rcon_host": "127.0.0.1", "rcon_port": 25575,
                      "server_address": "localhost:25565", "minecraft_version": installed_version,
-                     "map_version": MAP_VERSION, "java_required": required_java,
-                     "java_executable": str(java_executable), "server_jar": str(jar)}
+                     "map_version": MAP_VERSION if game_mode == "parkour" else "Dropper Arena 1.0",
+                     "game_mode": game_mode, "dropper_map_initialized": False,
+                     "java_required": required_java, "java_executable": str(java_executable), "server_jar": str(jar)}
             _write_parkour_settings({**state, "rcon_password": password})
             diagnostics.info("Zapisano konfigurację serwera i zgodę EULA w %s.", root)
         except Exception as exc:
-            diagnostics.error("Konfiguracja Minecraft Parkour nie powiodła się podczas etapu '%s': %s",
-                              phase, exc, exc_info=exc)
+            diagnostics.error("Konfiguracja Minecraft (%s) nie powiodła się podczas etapu '%s': %s",
+                              game_mode, phase, exc, exc_info=exc)
             shutil.rmtree(map_stage, ignore_errors=True)
-            shutil.rmtree(root / "world", ignore_errors=True)
+            if game_mode == "parkour":
+                shutil.rmtree(root / "world", ignore_errors=True)
             for generated in (root / "server.jar", root / "server.jar.new", root / "eula.txt", root / "server.properties"):
                 try:
                     generated.unlink(missing_ok=True)
@@ -728,11 +778,12 @@ class ParkourServer:
             return self.status()
         except Exception:
             pass
-        try:
-            _patch_map_datapack(root / "world")
-        except Exception as exc:
-            diagnostics.error("Nie udało się przygotować datapacku 100 Levels przed startem: %s", exc, exc_info=exc)
-            raise RuntimeError(f"Nie udało się przygotować mapy 100 Levels: {exc}") from exc
+        if state.get("game_mode", "parkour") == "parkour":
+            try:
+                _patch_map_datapack(root / "world")
+            except Exception as exc:
+                diagnostics.error("Nie udało się przygotować datapacku 100 Levels przed startem: %s", exc, exc_info=exc)
+                raise RuntimeError(f"Nie udało się przygotować mapy 100 Levels: {exc}") from exc
         try:
             required_java = int(state.get("java_required") or 0)
             if required_java < 1:
@@ -823,6 +874,7 @@ class ParkourServer:
                     "server_dir": state.get("server_dir", ""), "player": state.get("player", ""),
                     "minecraft_version": state.get("minecraft_version", MAP_VERSION),
                     "map_version": state.get("map_version", MAP_VERSION),
+                    "game_mode": state.get("game_mode", "parkour"),
                     "java_required": state.get("java_required"),
                     "chat_relay_enabled": bool(state.get("chat_relay_enabled", False)),
                     "players_online": 0, "players": [], **client_info,
@@ -850,6 +902,9 @@ class ParkourServer:
             return response
         try:
             listing = self._rcon("list", log_failure=False)
+            if state.get("game_mode") == "dropper" and not state.get("dropper_map_initialized"):
+                self.initialize_dropper_map()
+                state = self.settings()
             if self._last_status_ready is not True:
                 # Existing servers can retain whitelist=true from older properties.
                 # RCON runs as console, so disable it once they become reachable.
@@ -922,6 +977,50 @@ class ParkourServer:
         component = json.dumps({"text": message}, ensure_ascii=False, separators=(",", ":"))
         return self._rcon(f"tellraw @a {component}")
 
+    @staticmethod
+    def _dropper_lane(stage: int) -> int:
+        return max(1, min(5, int(stage)))
+
+    def _dropper_teleport(self, player: str, stage: int) -> None:
+        lane = self._dropper_lane(stage) - 1
+        x = lane * 18 + 4
+        self._rcon(f"tp {player} {x} 127 4")
+        self._rcon(f"effect give {player} minecraft:slow_falling 3 0 true")
+
+    def initialize_dropper_map(self) -> None:
+        """Build a compact five-stage vanilla Dropper arena once, without third-party plugins."""
+        state = self.settings()
+        if state.get("game_mode") != "dropper" or state.get("dropper_map_initialized"):
+            return
+        diagnostics.info("Buduję pięć szybów Droppera w świecie vanilla.")
+        for index in range(5):
+            x0 = index * 18
+            x1, x2 = x0 - 1, x0 + 9
+            z1, z2 = -1, 9
+            self._rcon(f"fill {x1} 65 {z1} {x2} 126 {z2} minecraft:glass")
+            self._rcon(f"fill {x0} 66 0 {x0 + 8} 125 8 minecraft:air")
+            self._rcon(f"fill {x0 + 3} 126 3 {x0 + 5} 126 5 minecraft:air")
+            for obstacle_y, hole_x, hole_z in ((112, 1, 1), (98, 5, 1), (84, 1, 5), (72, 5, 5)):
+                self._rcon(f"fill {x0} {obstacle_y} 0 {x0 + 8} {obstacle_y} 8 minecraft:glass")
+                self._rcon(f"fill {x0 + hole_x} {obstacle_y} {hole_z} {x0 + hole_x + 2} {obstacle_y} {hole_z + 2} minecraft:air")
+            self._rcon(f"fill {x0} 66 0 {x0 + 8} 66 8 minecraft:water")
+        for command in ("gamerule keepInventory true", "gamerule doMobSpawning false",
+                        "gamerule doDaylightCycle false", "time set noon", "weather clear",
+                        "setworldspawn 4 127 4"):
+            self._rcon(command)
+        state["dropper_map_initialized"] = True
+        state["dropper_player_levels"] = {}
+        _write_parkour_settings(state)
+        player = str(state.get("player", ""))
+        if PLAYER_RE.fullmatch(player):
+            try:
+                self._rcon("list", log_failure=False)
+                self._dropper_teleport(player, 1)
+            except Exception:
+                # The map is ready even if the streamer has not joined the server yet.
+                pass
+        diagnostics.info("Dropper Arena v1 gotowa: 5 szyb, szklane przeszkody i wodne lądowiska.")
+
     def get_player_level(self, player: str) -> int:
         if not PLAYER_RE.fullmatch(player or ""):
             raise ValueError("Niepoprawny nick gracza.")
@@ -937,6 +1036,47 @@ class ParkourServer:
         diagnostics.info("Wykonuję akcję Minecraft '%s' dla gracza %s.", action, player or "nieustawiony")
         if not PLAYER_RE.fullmatch(player or ""):
             raise ValueError("Najpierw ustaw nick gracza Minecraft.")
+        if action.startswith("dropper_"):
+            if state.get("game_mode") != "dropper":
+                raise RuntimeError("Uruchom tryb Dropper, aby użyć tej akcji.")
+            if not state.get("dropper_map_initialized"):
+                raise RuntimeError("Mapa Dropper nadal się przygotowuje — spróbuj za chwilę.")
+            levels = state.setdefault("dropper_player_levels", {})
+            stage = self._dropper_lane(levels.get(player, 1))
+            if action == "dropper_push":
+                self._rcon(f"effect give {player} minecraft:slow_falling 3 0 true")
+                self._rcon(f"execute as {player} at {player} run tp @s ^ ^0.4 ^-3")
+                return "Gracz został delikatnie odepchnięty w szybie Droppera."
+            if action in {"dropper_level_forward", "dropper_level_back"}:
+                stage = self._dropper_lane(stage + (1 if action.endswith("forward") else -1))
+                levels[player] = stage
+                self._dropper_teleport(player, stage)
+                _write_parkour_settings(state)
+                return f"Przeniesiono gracza do szybu {stage} z 5."
+            if action == "dropper_reset":
+                levels[player] = 1
+                self._dropper_teleport(player, 1)
+                _write_parkour_settings(state)
+                return "Powrót na górę pierwszego szybu Droppera."
+            effects = {
+                "dropper_speed": ([f"effect give {player} minecraft:speed 8 1 true"], "Sprint przez 8 sekund!"),
+                "dropper_slow": ([f"effect give {player} minecraft:slowness 7 1 true"], "Spowolnienie przez 7 sekund!"),
+                "dropper_blind": ([f"effect give {player} minecraft:darkness 4 0 true"], "Ciemność przez 4 sekundy!"),
+                "dropper_jump": ([f"effect give {player} minecraft:jump_boost 4 2 true",
+                                  f"effect give {player} minecraft:slow_falling 6 0 true"], "Wysoki skok — bezpieczne lądowanie!"),
+                "dropper_shield": ([f"effect give {player} minecraft:resistance 6 1 true"], "Tarcza odporności na 6 sekund!"),
+                "dropper_cleanse": ([f"effect clear {player} minecraft:slowness",
+                                     f"effect clear {player} minecraft:darkness",
+                                     f"effect clear {player} minecraft:blindness",
+                                     f"effect clear {player} minecraft:nausea",
+                                     f"effect clear {player} minecraft:weakness"], "Usunięto negatywne efekty!"),
+            }
+            if action in effects:
+                commands, message = effects[action]
+                for command in commands:
+                    self._rcon(command)
+                return message
+            raise ValueError("Nieobsługiwana akcja Dropper.")
         if action == "parkour_push":
             commands = [f"effect give {player} minecraft:slow_falling 3 0 true",
                         f"execute as {player} at {player} run tp @s ^ ^0.6 ^-3"]

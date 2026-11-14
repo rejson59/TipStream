@@ -501,3 +501,69 @@ def test_ready_existing_server_has_whitelist_disabled_through_rcon(monkeypatch, 
     assert status["ready"] is True
     assert commands == ["list", "whitelist off"]
     assert "white-list=false" in (tmp_path / "server.properties").read_text(encoding="utf-8")
+
+
+def test_dropper_setup_uses_separate_vanilla_world_without_external_map(tmp_path, monkeypatch):
+    from app import parkour_server
+
+    server = ParkourServer()
+    monkeypatch.setattr(parkour_server, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(parkour_server, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(parkour_server, "_resolve_release", lambda version: (version, {}))
+    monkeypatch.setattr(parkour_server.shutil, "which", lambda _name: "/usr/bin/java")
+    monkeypatch.setattr(parkour_server, "_map_archive", lambda: (_ for _ in ()).throw(AssertionError("dropper must not need Parkour archive")))
+    monkeypatch.setattr(parkour_server, "_extract_map", lambda *_args: (_ for _ in ()).throw(AssertionError("no archive extraction")))
+
+    def fake_download(root, version):
+        jar = root / "server.jar"
+        jar.write_bytes(b"server")
+        return jar, 21, version, Path("/usr/bin/java")
+
+    monkeypatch.setattr(parkour_server, "_download_server_jar", fake_download)
+    monkeypatch.setattr(server, "start", lambda: {})
+    monkeypatch.setattr(server, "status", lambda: {"configured": True, "game_mode": server.settings()["game_mode"]})
+    result = server.setup("", "Streamer", True, "26.2", "dropper")
+    root = tmp_path / "MinecraftDropper" / "servers" / "26.2"
+    settings = json.loads((tmp_path / "settings.json").read_text())
+    assert result["game_mode"] == "dropper"
+    assert settings["game_mode"] == "dropper"
+    assert settings["map_version"] == "Dropper Arena 1.0"
+    assert (root / "server.jar").is_file()
+    assert not (root / "world" / "level.dat").exists()
+
+
+def test_dropper_map_generation_is_bounded_and_idempotent(tmp_path, monkeypatch):
+    from app import parkour_server
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"game_mode": "dropper", "dropper_map_initialized": False,
+                                        "dropper_player_levels": {}}))
+    monkeypatch.setattr(parkour_server, "SETTINGS_PATH", settings_path)
+    server = ParkourServer()
+    commands = []
+    monkeypatch.setattr(server, "_rcon", lambda command, **_kwargs: commands.append(command) or "ok")
+    server.initialize_dropper_map()
+    stored = json.loads(settings_path.read_text())
+    assert stored["dropper_map_initialized"] is True
+    assert sum(command.startswith("fill ") for command in commands) == 60
+    assert any("minecraft:water" in command for command in commands)
+    assert any("minecraft:glass" in command for command in commands)
+    server.initialize_dropper_map()
+    assert len(commands) == 66
+
+
+def test_dropper_level_actions_clamp_and_persist_stage(tmp_path, monkeypatch):
+    from app import parkour_server
+
+    monkeypatch.setattr(parkour_server, "SETTINGS_PATH", tmp_path / "settings.json")
+    server = ParkourServer()
+    state = {"game_mode": "dropper", "dropper_map_initialized": True,
+             "dropper_player_levels": {"Streamer": 5}, "player": "Streamer"}
+    commands = []
+    monkeypatch.setattr(server, "settings", lambda: state)
+    monkeypatch.setattr(server, "_rcon", lambda command: commands.append(command) or "ok")
+    assert "szybu 5 z 5" in server.execute_action("dropper_level_forward")
+    assert state["dropper_player_levels"]["Streamer"] == 5
+    assert "szybu 4 z 5" in server.execute_action("dropper_level_back")
+    assert state["dropper_player_levels"]["Streamer"] == 4
+    assert "tp Streamer 58 127 4" in commands

@@ -1,4 +1,4 @@
-"""The supported ready-to-run GiftStream game: Minecraft Parkour."""
+"""Built-in ready-to-run Minecraft game modes supported by GiftStream."""
 from __future__ import annotations
 
 
@@ -40,6 +40,26 @@ GAMES = [
             _rule("mp-follow", "Follow → więzienie na 20 s", {"type": "follow"}, {"type": "parkour_jail"}, "🔒 Do więzienia!"),
             _rule("mp-reset", "Castle · 1000+ monet → reset za 60 s", {"type": "gift", "gift_name": "Castle", "min_coins": 1000}, {"type": "parkour_reset"}, "🏰 Reset za 60 sekund!", True),
             _rule("mp-antireset", "Lion · 1000+ monet → anty-reset", {"type": "gift", "gift_name": "Lion", "min_coins": 1000}, {"type": "parkour_antireset"}, "🦁 Reset uratowany!", True),
+        ],
+    },
+    {
+        "id": "minecraft-dropper",
+        "title": "Minecraft: Dropper",
+        "category": "Dropper",
+        "status": "bridge",
+        "integration": "GiftStream Local Minecraft",
+        "icon": "🪂",
+        "tagline": "Pięć pionowych poziomów, widzowie sterują zrzutem.",
+        "description": "Dropper Arena to lokalnie generowana mapa vanilla z pięcioma pionowymi szybami i wodnymi lądowiskami. Akcje widzów obejmują push, skok między poziomami, reset oraz krótkie efekty. Nie wymaga pluginów ani modów.",
+        "ideas": ["Róża → push", "Donut → wyższy poziom", "Ice Cream → niższy poziom", "Castle → reset"],
+        "preset_id": "minecraft-dropper",
+        "rules": [
+            _rule("md-push", "Róża → push", {"type": "gift", "gift_name": "Rose"}, {"type": "dropper_push"}, "🌹 Push w szybie!"),
+            _rule("md-forward", "Donut → wyższy poziom", {"type": "gift", "gift_name": "Donut"}, {"type": "dropper_level_forward"}, "🍩 Wyższy szyb!"),
+            _rule("md-back", "Ice Cream → niższy poziom", {"type": "gift", "gift_name": "Ice Cream"}, {"type": "dropper_level_back"}, "↩ Niższy szyb!"),
+            _rule("md-reset", "Castle → powrót na start", {"type": "gift", "gift_name": "Castle"}, {"type": "dropper_reset"}, "🏰 Powrót na górę!", True),
+            _rule("md-follow", "Follow → spowolnienie", {"type": "follow"}, {"type": "dropper_slow"}, "🐢 Spowolnienie w locie!"),
+            _rule("md-jump", "Panda → wysoki skok", {"type": "gift", "gift_name": "Panda"}, {"type": "dropper_jump"}, "⬆ Wysoki skok!"),
         ],
     },
 ]

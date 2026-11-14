@@ -1,10 +1,16 @@
-# Minecraft Parkour 100 Levels
+# Minecraft Parkour and Dropper
 
-GiftStream's only built-in game flow is a local Minecraft Parkour server using the bundled `100-levels-5229-v1.7.4.zip` world.
+GiftStream includes two local Minecraft game modes: Parkour uses the bundled `100-levels-5229-v1.7.4.zip` world; Dropper builds a compact five-shaft arena directly in a fresh vanilla world with controlled RCON commands.
+
+## Dropper mode
+
+Choose **Minecraft Dropper · 5 szybów** in the Minecraft panel and create the local server. GiftStream uses a separate `MinecraftDropper/servers/<version>` folder, then generates **Dropper Arena 1.0** in the vanilla world after RCON becomes ready: five glass-lined vertical shafts, varied glass obstacle openings, and water landing pools. Map generation is bounded to those fixed coordinates and is marked complete in settings so it does not overwrite the arena on restart. The map is generated locally rather than copied from a third-party download; this avoids unknown archive contents and map-version mismatch. The vanilla server does not load Bukkit/Paper plugins, and no plugin or mod is needed for the audience actions.
+
+The built-in **Reguły Dropper** preset includes push, jump to a higher/lower shaft, return to start, slow, and high jump. The action editor also offers the same timed effects as Parkour: speed, slow, darkness, jump plus slow-falling, resistance, and cleanse. Assign a gift/event or test locally after the arena is ready and game control is enabled. The five shafts are manually selected by level actions; reaching the water does not automatically advance the stage.
 
 ## One-click setup
 
-In **Minecraft Parkour**, select **Najnowsza stabilna** or one of the recent official releases, enter your Minecraft nickname, read and accept the Minecraft EULA, then choose **Utwórz i uruchom serwer**. GiftStream queries Mojang's official version manifest; snapshots are not offered. Each selected release gets its own server and world folder, so switching versions does not overwrite another version's world. On first setup it:
+In **Minecraft Parkour** or **Minecraft Dropper**, select **Najnowsza stabilna** or one of the recent official releases, enter your Minecraft nickname, read and accept the Minecraft EULA, then choose **Utwórz i uruchom serwer**. GiftStream queries Mojang's official version manifest; snapshots are not offered. Each selected release gets its own server and world folder, so switching versions does not overwrite another version's world. On first setup it:
 
 - downloads the selected official Minecraft server JAR using Mojang's version manifest and verifies its published SHA-1;
 - resolves **Najnowsza stabilna** at setup time and checks that installed Java meets that release's requirement;
@@ -23,7 +29,7 @@ The bundled 100 Levels map was prepared for Minecraft **26.2**. Its `training_mo
 
 ## Preset and coin prices
 
-The sole built-in preset maps:
+The built-in **Parkour** preset maps:
 
 - Rose (1–29 Coins) to a small push;
 - Donut (30–999 Coins) to the next level;
@@ -42,4 +48,4 @@ The option **Przekazuj komentarze TikTok LIVE do czatu Minecraft bez zmian** is 
 
 ## Network safety
 
-This is a local streamer-PC feature. `127.0.0.1` is not reachable by viewers or another host. Do not forward or publicly expose Minecraft RCON or the server port. Third-party plugins are not required for this Parkour flow.
+This is a local streamer-PC feature. `127.0.0.1` is not reachable by viewers or another host. Do not forward or publicly expose Minecraft RCON or the server port. Third-party plugins are not required or automatically installed for either mode. Dropper uses the vanilla server and its own generated world; adding an unrelated Bukkit/Paper plugin would require replacing the server type and a separate compatibility/security review.
