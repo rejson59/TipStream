@@ -33,6 +33,11 @@ MAX_SERVER_JAR_BYTES = 300 * 1024 * 1024
 _VERSION_CACHE: tuple[float, dict[str, Any]] | None = None
 _VERSION_CACHE_TTL = 600
 _VERSION_RE = re.compile(r"^\d+\.\d+(?:\.\d+)?$")
+_RCON_COMMAND_ERROR = re.compile(
+    r"(?i)(unknown or incomplete command|unknown command|incorrect argument|"
+    r"no entity was found|no player was found|could not find (?:player|entity)|"
+    r"unknown (?:effect|scoreboard objective)|expected .{1,120} at position)"
+)
 _WINDOWS_PROCESS_CACHE: tuple[float, list[dict[str, Any]]] = (0.0, [])
 _START_LOCK = threading.Lock()
 _SERVER_STARTUP_GRACE_SEC = 8.0
@@ -859,6 +864,16 @@ class ParkourServer:
                 diagnostics.warning("Polecenie RCON '%s' nie powiodło się: %s", command_kind, exc)
             raise
 
+    def _rcon_checked(self, command: str) -> str:
+        """Reject vanilla error responses; RCON otherwise returns syntax/target errors as text."""
+        result = self._rcon(command)
+        if _RCON_COMMAND_ERROR.search(result):
+            command_kind = command.split(maxsplit=1)[0] if command else "<empty>"
+            diagnostics.error("Minecraft odrzucił polecenie RCON '%s': %s", command_kind, result[:500])
+            raise RuntimeError(f"Minecraft odrzucił polecenie '{command_kind}': {result[:500]}")
+        diagnostics.info("Minecraft odpowiedział na RCON '%s': %s", command.split(maxsplit=1)[0], result[:300])
+        return result
+
     def status(self) -> dict[str, Any]:
         state = self.settings()
         clients = _running_minecraft_clients()
@@ -967,7 +982,7 @@ class ParkourServer:
         return {**self.status(), "message": "Wysłano polecenie bezpiecznego zamknięcia serwera."}
 
     def command(self, command: str) -> str:
-        return self._rcon(command)
+        return self._rcon_checked(command)
 
     def relay_chat(self, message: str) -> str:
         """Relay plain TikTok chat text to Minecraft without interpreting it as a command."""
@@ -979,7 +994,7 @@ class ParkourServer:
         # characters as data. Preserve the message text (including punctuation and
         # Unicode) exactly; never prepend a username or pass it through RCON raw.
         component = json.dumps({"text": message}, ensure_ascii=False, separators=(",", ":"))
-        return self._rcon(f"tellraw @a {component}")
+        return self._rcon_checked(f"tellraw @a {component}")
 
     @staticmethod
     def _dropper_lane(stage: int) -> int:
@@ -989,11 +1004,11 @@ class ParkourServer:
         stage = self._dropper_lane(stage)
         lane = stage - 1
         x = lane * 18 + 4
-        self._rcon(f"tp {player} {x} 127 4")
-        self._rcon(f"effect give {player} minecraft:slow_falling 3 0 true")
+        self._rcon_checked(f"tp {player} {x} 127 4")
+        self._rcon_checked(f"effect give {player} minecraft:slow_falling 3 0 true")
         title = json.dumps({"text": f"DROPPER · SZYB {stage}/5", "color": "aqua", "bold": True},
                            ensure_ascii=False, separators=(",", ":"))
-        self._rcon(f"title {player} actionbar {title}")
+        self._rcon_checked(f"title {player} actionbar {title}")
 
     def initialize_dropper_map(self) -> None:
         """Build a compact five-stage vanilla Dropper arena once, without third-party plugins."""
@@ -1007,17 +1022,17 @@ class ParkourServer:
             x0 = index * 18
             x1, x2 = x0 - 1, x0 + 9
             z1, z2 = -1, 9
-            self._rcon(f"fill {x1} 65 {z1} {x2} 126 {z2} minecraft:{color}")
-            self._rcon(f"fill {x0} 66 0 {x0 + 8} 125 8 minecraft:air")
-            self._rcon(f"fill {x0 + 3} 126 3 {x0 + 5} 126 5 minecraft:air")
+            self._rcon_checked(f"fill {x1} 65 {z1} {x2} 126 {z2} minecraft:{color}")
+            self._rcon_checked(f"fill {x0} 66 0 {x0 + 8} 125 8 minecraft:air")
+            self._rcon_checked(f"fill {x0 + 3} 126 3 {x0 + 5} 126 5 minecraft:air")
             for obstacle_y, hole_x, hole_z in ((112, 1, 1), (98, 5, 1), (84, 1, 5), (72, 5, 5)):
-                self._rcon(f"fill {x0} {obstacle_y} 0 {x0 + 8} {obstacle_y} 8 minecraft:glass")
-                self._rcon(f"fill {x0 + hole_x} {obstacle_y} {hole_z} {x0 + hole_x + 2} {obstacle_y} {hole_z + 2} minecraft:air")
-            self._rcon(f"fill {x0} 66 0 {x0 + 8} 66 8 minecraft:water")
+                self._rcon_checked(f"fill {x0} {obstacle_y} 0 {x0 + 8} {obstacle_y} 8 minecraft:glass")
+                self._rcon_checked(f"fill {x0 + hole_x} {obstacle_y} {hole_z} {x0 + hole_x + 2} {obstacle_y} {hole_z + 2} minecraft:air")
+            self._rcon_checked(f"fill {x0} 66 0 {x0 + 8} 66 8 minecraft:water")
         for command in ("gamerule keepInventory true", "gamerule doMobSpawning false",
                         "gamerule doDaylightCycle false", "time set noon", "weather clear",
                         "setworldspawn 4 127 4"):
-            self._rcon(command)
+            self._rcon_checked(command)
         state["dropper_map_initialized"] = True
         state["dropper_player_levels"] = {}
         _write_parkour_settings(state)
@@ -1034,7 +1049,7 @@ class ParkourServer:
     def get_player_level(self, player: str) -> int:
         if not PLAYER_RE.fullmatch(player or ""):
             raise ValueError("Niepoprawny nick gracza.")
-        output = self._rcon(f"scoreboard players get {player} level")
+        output = self._rcon_checked(f"scoreboard players get {player} level")
         match = re.search(r"has\s+(-?\d+)\s+\[level\]", output) or re.search(r"(-?\d+)", output)
         if not match:
             raise RuntimeError(f"Nie udało się odczytać poziomu mapy: {output or 'gracz może być poza mapą'}")
@@ -1054,8 +1069,8 @@ class ParkourServer:
             levels = state.setdefault("dropper_player_levels", {})
             stage = self._dropper_lane(levels.get(player, 1))
             if action == "dropper_push":
-                self._rcon(f"effect give {player} minecraft:slow_falling 3 0 true")
-                self._rcon(f"execute as {player} at {player} run tp @s ^ ^0.4 ^-3")
+                self._rcon_checked(f"effect give {player} minecraft:slow_falling 3 0 true")
+                self._rcon_checked(f"execute as {player} at {player} run tp @s ^ ^0.4 ^-3")
                 return "Gracz został delikatnie odepchnięty w szybie Droppera."
             if action in {"dropper_level_forward", "dropper_level_back"}:
                 stage = self._dropper_lane(stage + (1 if action.endswith("forward") else -1))
@@ -1084,14 +1099,14 @@ class ParkourServer:
             if action in effects:
                 commands, message = effects[action]
                 for command in commands:
-                    self._rcon(command)
+                    self._rcon_checked(command)
                 return message
             raise ValueError("Nieobsługiwana akcja Dropper.")
         if action == "parkour_push":
             commands = [f"effect give {player} minecraft:slow_falling 3 0 true",
                         f"execute as {player} at {player} run tp @s ^ ^0.6 ^-3"]
             for command in commands:
-                self._rcon(command)
+                self._rcon_checked(command)
             diagnostics.info("Akcja Parkour push zakończona powodzeniem dla gracza %s.", player)
             return "Delikatnie odrzucono gracza o 3 bloki do tyłu."
         if action in {"parkour_level_forward", "parkour_level_back"}:
@@ -1107,7 +1122,7 @@ class ParkourServer:
             commands = [f"effect give {player} minecraft:slow_falling 30 0 true",
                         f"tp {player} {x + dx / 2:.1f} {y} {z + dz / 2:.1f}"]
             for command in commands:
-                self._rcon(command)
+                self._rcon_checked(command)
             diagnostics.info("Przeniesiono gracza %s na obszar poziomu %s.", player, target)
             return f"Przeniesiono gracza na obszar poziomu {target}."
         effects = {
@@ -1129,7 +1144,7 @@ class ParkourServer:
         if action in effects:
             commands, message = effects[action]
             for command in commands:
-                self._rcon(command)
+                self._rcon_checked(command)
             diagnostics.info("Zastosowano efekt Parkour '%s' dla gracza %s.", action, player)
             return message
         if action == "parkour_jail":
@@ -1139,7 +1154,7 @@ class ParkourServer:
                         f"effect give {player} minecraft:slowness 20 255 true",
                         f"title {player} actionbar {{\"text\":\"WIĘZIENIE · 20 s\",\"color\":\"red\"}}"]
             for command in commands:
-                self._rcon(command)
+                self._rcon_checked(command)
             diagnostics.info("Gracz %s został przeniesiony do parkour-jail na 20 sekund.", player)
             return "Gracz trafił na 20 sekund do lobby-więzienia."
         if action in {"parkour_reset", "parkour_antireset"}:
@@ -1149,28 +1164,28 @@ class ParkourServer:
     def start_reset(self, player: str) -> str:
         if not PLAYER_RE.fullmatch(player or ""):
             raise ValueError("Niepoprawny nick gracza.")
-        self._rcon(f"title {player} title {{\"text\":\"RESET ZA 60 SEKUND\",\"color\":\"gold\"}}")
-        self._rcon(f"title {player} subtitle {{\"text\":\"Wyślij prezent przypisany do Anty-resetu, aby anulować\",\"color\":\"white\"}}")
+        self._rcon_checked(f"title {player} title {{\"text\":\"RESET ZA 60 SEKUND\",\"color\":\"gold\"}}")
+        self._rcon_checked(f"title {player} subtitle {{\"text\":\"Wyślij prezent przypisany do Anty-resetu, aby anulować\",\"color\":\"white\"}}")
         return "Rozpoczęto 60-sekundowe odliczanie resetu."
 
     def update_reset_countdown(self, player: str, remaining: int) -> None:
         if not PLAYER_RE.fullmatch(player or ""):
             raise ValueError("Niepoprawny nick gracza.")
         remaining = max(0, min(60, int(remaining)))
-        self._rcon(f"title {player} actionbar {{\"text\":\"RESET ZA {remaining} s · podaruj Anty-reset, aby anulować\",\"color\":\"gold\"}}")
+        self._rcon_checked(f"title {player} actionbar {{\"text\":\"RESET ZA {remaining} s · podaruj Anty-reset, aby anulować\",\"color\":\"gold\"}}")
 
     def finish_reset(self, player: str) -> str:
-        return self._rcon(f"execute as {player} run trigger restart set 1")
+        return self._rcon_checked(f"execute as {player} run trigger restart set 1")
 
     def cancel_reset(self, player: str) -> str:
         if not PLAYER_RE.fullmatch(player or ""):
             raise ValueError("Niepoprawny nick gracza.")
-        self._rcon(f"title {player} clear")
-        self._rcon(f"title {player} actionbar {{\"text\":\"RESET ANULOWANY\",\"color\":\"green\"}}")
+        self._rcon_checked(f"title {player} clear")
+        self._rcon_checked(f"title {player} actionbar {{\"text\":\"RESET ANULOWANY\",\"color\":\"green\"}}")
         return "Reset anulowany przez anty-reset."
 
     def release_jail(self, player: str) -> str:
         if not PLAYER_RE.fullmatch(player or ""):
             raise ValueError("Niepoprawny nick gracza.")
-        self._rcon(f"effect clear {player} minecraft:slowness")
-        return self._rcon(f"tp {player} -4 89 1")
+        self._rcon_checked(f"effect clear {player} minecraft:slowness")
+        return self._rcon_checked(f"tp {player} -4 89 1")

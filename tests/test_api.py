@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app import main
 from app.models import AppConfig, Preset, Rule
@@ -363,11 +364,28 @@ def test_gift_art_proxy_allows_only_tiktok_cdn_and_returns_image(monkeypatch):
     assert unavailable.headers["cache-control"] == "public, max-age=300"
 
 
+def test_rule_sound_url_requires_https_or_an_existing_local_upload(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    monkeypatch.setattr(main, "_SOUND_UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(main, "_SOUND_FILE_RE", re.compile(r"^[0-9a-f]{32}\.mp3$"))
+    main._validate_rule_sound_url("https://cdn.example.org/sound.mp3")
+    with pytest.raises(HTTPException, match="publicznym linkiem HTTPS"):
+        main._validate_rule_sound_url("http://cdn.example.org/sound.mp3")
+    with pytest.raises(HTTPException, match="publicznym linkiem HTTPS"):
+        main._validate_rule_sound_url("https://127.0.0.1/audio.mp3")
+    with pytest.raises(HTTPException, match="Nie znaleziono"):
+        main._validate_rule_sound_url("/api/sounds/uploads/0123456789abcdef0123456789abcdef.mp3")
+    (tmp_path / "0123456789abcdef0123456789abcdef.mp3").write_bytes(b"audio")
+    main._validate_rule_sound_url("/api/sounds/uploads/0123456789abcdef0123456789abcdef.mp3")
+
+
 def test_rule_editor_has_searchable_gift_picker_and_audio_upload_controls():
     page = TestClient(main.app).get("/").text
     assert 'id="rule-gift-search"' in page
     assert 'role="listbox"' in page
     assert 'id="rule-sound-choice"' in page
+    assert 'value="custom">Własny link HTTPS / plik lokalny' in page
+    assert 'id="rule-sound-url"' in page
     assert 'id="sound-file"' in page
     assert 'id="upload-sound"' in page
     assert 'data-sound-search="Heaven Jumpstyle"' in page

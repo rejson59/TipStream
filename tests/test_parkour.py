@@ -272,6 +272,28 @@ def test_new_parkour_gameplay_actions_are_bounded_and_rcon_safe(monkeypatch, act
         server.execute_action(action, "bad player")
 
 
+def test_rcon_action_rejects_minecraft_command_errors_instead_of_reporting_success(monkeypatch):
+    server = ParkourServer()
+    monkeypatch.setattr(server, "settings", lambda: {"player": "Streamer"})
+    commands = []
+    def response(command):
+        commands.append(command)
+        return "Unknown or incomplete command, see below for error"
+    monkeypatch.setattr(server, "_rcon", response)
+    with pytest.raises(RuntimeError, match="Minecraft odrzucił polecenie 'effect'"):
+        server.execute_action("parkour_speed")
+    assert commands == ["effect give Streamer minecraft:speed 8 1 true"]
+
+
+def test_rcon_action_accepts_success_responses(monkeypatch):
+    server = ParkourServer()
+    monkeypatch.setattr(server, "settings", lambda: {"player": "Streamer"})
+    commands = []
+    monkeypatch.setattr(server, "_rcon", lambda command: commands.append(command) or "Applied effect Speed II to Streamer")
+    assert server.execute_action("parkour_speed") == "Sprint przez 8 sekund!"
+    assert len(commands) == 1
+
+
 def test_chat_relay_encodes_text_as_tellraw_json_without_modifying_it(monkeypatch):
     server = ParkourServer()
     commands = []

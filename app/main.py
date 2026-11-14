@@ -852,12 +852,34 @@ async def get_preset(preset_id: str) -> dict:
         raise HTTPException(404, "Nie znaleziono presetu")
     return p.model_dump()
 
+def _validate_rule_sound_url(url: str) -> None:
+    if url.startswith("/api/sounds/uploads/"):
+        filename = url.rsplit("/", 1)[-1]
+        if not _SOUND_FILE_RE.fullmatch(filename) or not (_SOUND_UPLOAD_DIR / filename).is_file():
+            raise HTTPException(422, "Nie znaleziono przesłanego pliku dźwiękowego przypisanego do reguły.")
+        return
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    try:
+        ip = ipaddress.ip_address(hostname)
+        unsafe_ip = ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+    except ValueError:
+        unsafe_ip = False
+    if (len(url) > 2048 or parsed.scheme != "https" or not hostname or parsed.username or
+            parsed.password or unsafe_ip or hostname in {"localhost", "metadata.google.internal"} or
+            hostname.endswith((".localhost", ".local", ".internal"))):
+        raise HTTPException(422, "Dźwięk reguły musi być publicznym linkiem HTTPS albo wgranym plikiem lokalnym.")
+
+
 @app.put("/api/presets/{preset_id}")
 async def update_preset(preset_id: str, preset: Preset) -> dict:
     if preset_id not in preset_store.PRESET_IDS:
         raise HTTPException(404, "Nie znaleziono presetu")
     if preset.id != preset_id:
         raise HTTPException(400, "ID w URL i body muszą być takie same")
+    for rule in preset.rules:
+        if rule.sound:
+            _validate_rule_sound_url(rule.sound)
     saved = preset_store.save_preset(preset)
     if engine.active_preset and engine.active_preset.id == preset_id:
         engine.load_preset(preset_id)
