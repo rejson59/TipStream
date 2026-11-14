@@ -392,7 +392,9 @@ def test_rule_editor_has_searchable_gift_picker_and_audio_upload_controls():
     assert 'data-sound-search="X-Cool Ultra Slowed"' in page
     assert page.count('data-sound-search=') == 11
     app_js = TestClient(main.app).get('/static/app.js').text
+    assert "lang:window.GiftStreamI18n?.getLang()||'pl'" in app_js
     assert 'MAX_SOUND_CLIP_SECONDS=12' in app_js
+    assert TestClient(main.app).get('/static/i18n.js').status_code == 200
     assert 'nic nie pobiera ani nie ustawia automatycznie' in page
     assert 'cena nieudostępniona' in page
     assert 'id="parkour-test-action"' in page
@@ -401,6 +403,8 @@ def test_rule_editor_has_searchable_gift_picker_and_audio_upload_controls():
     assert 'id="overlay-opacity"' in page
     assert 'data-overlay-field="leaderboard"' in page
     assert 'id="parkour-game-mode"' in page
+    assert 'id="language-select"' in page
+    assert '/static/i18n.js' in page
     assert 'Minecraft Dropper · 5 szybów' in page
 
 
@@ -431,6 +435,9 @@ def test_overlay_arena_template_serves_editable_transparent_hud():
     assert response.status_code == 200
     assert 'id="arena-overlay"' in response.text
     assert 'id="arena-gifts"' in response.text
+    assert 'id="gift-reaction"' in response.text
+    assert 'id="arena-gift-range"' in response.text
+    assert '/static/i18n.js' in response.text
     assert '/static/overlay.css' in response.text
     assert '/static/overlay.js' in response.text
     assert 'data-arena-widget="brand"' in response.text
@@ -440,4 +447,9 @@ def test_overlay_arena_template_serves_editable_transparent_hud():
     assert css.status_code == js.status_code == 200
     assert '--overlay-opacity' in css.text
     assert 'giftstream-overlay-position' in js.text
+    assert "showGiftReaction(m.data)" in js.text
+    assert 'giftRotationPage++' in js.text
+    assert '.filter(r=>r.enabled).slice(0,8)' not in js.text
+    assert 'event.gift_image_url||gift?.image_url' in js.text
+    assert '.gift-reaction.is-visible' in css.text
     assert '.arena-density-bold' in css.text
