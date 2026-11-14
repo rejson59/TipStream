@@ -17,6 +17,7 @@ _state: dict[str, str | bool | int] = {
     "last_checked": "",
     "last_check_message": "",
     "check_id": 0,
+    "progress": 0,
 }
 
 
@@ -42,6 +43,7 @@ def request_check() -> bool:
         if _state["checking"]:
             return False
         _state["checking"] = True
+        _state["progress"] = 0
         _state["check_id"] = int(_state["check_id"]) + 1
         _state["last_check_message"] = "Sprawdzam dostępność aktualizacji…"
         _check_requested.set()
@@ -60,7 +62,14 @@ def begin_check() -> None:
         if not _state["checking"]:
             _state["check_id"] = int(_state["check_id"]) + 1
         _state["checking"] = True
+        _state["progress"] = 0
         _state["last_check_message"] = "Sprawdzam dostępność aktualizacji…"
+
+
+def report_progress(progress: int, message: str) -> None:
+    with _lock:
+        _state["progress"] = max(0, min(100, int(progress)))
+        _state["last_check_message"] = message[:180]
 
 
 def finish_check(message: str) -> None:
@@ -94,6 +103,6 @@ def clear() -> None:
     with _lock:
         _pending_executable = None
         _state.update({"available": False, "tag": "", "message": "", "checking": False,
-                       "last_checked": "", "last_check_message": "", "check_id": 0})
+                       "last_checked": "", "last_check_message": "", "check_id": 0, "progress": 0})
         _apply_requested.clear()
         _check_requested.clear()

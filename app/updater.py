@@ -7,12 +7,16 @@ import json
 import os
 import re
 import shutil
+import threading
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 APP_EXE = "GiftStream.exe"
 MAX_EXECUTABLE_BYTES = 400 * 1024 * 1024
+DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+DOWNLOAD_WORKERS = 6
 
 
 class UpdateError(RuntimeError):
@@ -48,9 +52,94 @@ def _open(url: str, timeout: int = 15) -> bytes:
     return body
 
 
+def _download_range(url: str, start: int, end: int, total: int) -> bytes:
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "GiftStream-Updater/1",
+        "Accept": "application/octet-stream",
+        "Range": f"bytes={start}-{end}",
+    })
+    with urllib.request.urlopen(request, timeout=25) as response:
+        if getattr(response, "status", response.getcode()) != 206:
+            raise UpdateError("Serwer nie obsługuje pobierania fragmentów.")
+        expected_range = f"bytes {start}-{end}/{total}"
+        if response.headers.get("Content-Range", "").strip() != expected_range:
+            raise UpdateError("Serwer zwrócił nieprawidłowy fragment aktualizacji.")
+        chunk = response.read(end - start + 2)
+    if len(chunk) != end - start + 1:
+        raise UpdateError("Niekompletny fragment aktualizacji.")
+    return chunk
+
+
+def download_executable(url: str, on_progress: Callable[[int, str], None] | None = None) -> bytes:
+    """Download an update using parallel HTTP ranges, with a safe full-download fallback."""
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "GiftStream-Updater/1",
+        "Accept": "application/octet-stream",
+        "Range": "bytes=0-0",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            status = getattr(response, "status", response.getcode())
+            if status == 200:  # Server ignored Range and already sent the complete executable.
+                data = response.read(MAX_EXECUTABLE_BYTES + 1)
+                if len(data) > MAX_EXECUTABLE_BYTES:
+                    raise UpdateError("Plik aktualizacji jest większy niż dozwolony limit.")
+                if on_progress:
+                    on_progress(100, "Pobieranie aktualizacji zakończone.")
+                return data
+            content_range = response.headers.get("Content-Range", "")
+            match = re.fullmatch(r"bytes 0-0/(\d+)", content_range.strip())
+            probe = response.read(2)
+            if status != 206 or not match or len(probe) != 1:
+                raise ValueError("Partial download is unsupported")
+            total = int(match.group(1))
+            if total > MAX_EXECUTABLE_BYTES:
+                raise UpdateError("Plik aktualizacji jest większy niż dozwolony limit.")
+    except UpdateError:
+        raise
+    except Exception:
+        data = _open(url, timeout=45)
+        if on_progress:
+            on_progress(100, "Pobieranie aktualizacji zakończone.")
+        return data
+
+    ranges = [(start, min(total - 1, start + DOWNLOAD_CHUNK_BYTES - 1))
+              for start in range(0, total, DOWNLOAD_CHUNK_BYTES)]
+    pieces: list[bytes | None] = [None] * len(ranges)
+    done = 0
+    progress_lock = threading.Lock()
+    try:
+        with ThreadPoolExecutor(max_workers=min(DOWNLOAD_WORKERS, len(ranges))) as pool:
+            futures = {pool.submit(_download_range, url, start, end, total): index
+                       for index, (start, end) in enumerate(ranges)}
+            for future in as_completed(futures):
+                pieces[futures[future]] = future.result()
+                with progress_lock:
+                    done += len(pieces[futures[future]] or b"")
+                    percent = min(99, int(done * 100 / max(1, total)))
+                if on_progress:
+                    on_progress(percent, f"Pobieranie aktualizacji: {percent}%")
+    except Exception:
+        # Some release hosts/proxies do not honor Range reliably. Restart as one
+        # bounded streaming read rather than leave a corrupted or partial update.
+        data = _open(url, timeout=45)
+        if on_progress:
+            on_progress(100, "Pobieranie aktualizacji zakończone.")
+        return data
+
+    if any(piece is None for piece in pieces):
+        raise UpdateError("Nie udało się pobrać wszystkich fragmentów aktualizacji.")
+    executable = b"".join(piece for piece in pieces if piece is not None)
+    if len(executable) != total:
+        raise UpdateError("Rozmiar pobranej aktualizacji nie zgadza się z serwerem.")
+    if on_progress:
+        on_progress(100, "Pobieranie aktualizacji zakończone.")
+    return executable
+
+
 def fetch_latest_release(repository: str) -> dict[str, Any]:
     try:
-        release = json.loads(_open(release_api_url(repository)))
+        release = json.loads(_open(release_api_url(repository), timeout=6))
     except UpdateError:
         raise
     except Exception as exc:
@@ -138,6 +227,7 @@ def prepare_latest(
     data_root: Path,
     running_executable: Path | None = None,
     running_tag: str = "",
+    on_progress: Callable[[int, str], None] | None = None,
 ) -> tuple[str, Path, bool, str]:
     """Return the latest verified executable, falling back to the running one offline."""
     cached = current_install(data_root)
@@ -156,8 +246,14 @@ def prepare_latest(
         return cached[0], cached[1], False, "Masz najnowszą wersję."
 
     try:
-        executable = _open(release["executable_url"], timeout=45)
-        manifest = _open(release["checksum_url"], timeout=15).decode("utf-8-sig")
+        if on_progress:
+            on_progress(0, "Pobieram aktualizację w kilku równoległych strumieniach…")
+        # The small checksum and large EXE travel concurrently to save a network round trip.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            executable_future = pool.submit(download_executable, release["executable_url"], on_progress)
+            manifest_future = pool.submit(_open, release["checksum_url"], 12)
+            executable = executable_future.result()
+            manifest = manifest_future.result().decode("utf-8-sig")
         expected = expected_sha256(manifest)
         actual = hashlib.sha256(executable).hexdigest()
         if not hmac.compare_digest(actual, expected):

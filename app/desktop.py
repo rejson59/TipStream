@@ -169,7 +169,9 @@ class GiftStreamDesktop:
                 update_state.begin_check()
                 message = "Nie udało się sprawdzić aktualizacji. Spróbuj ponownie później."
                 try:
-                    tag, executable, updated, message = prepare_latest(GITHUB_REPOSITORY, data_dir())
+                    tag, executable, updated, message = prepare_latest(
+                        GITHUB_REPOSITORY, data_dir(), on_progress=update_state.report_progress
+                    )
                     if updated and tag != self.current_tag:
                         create_start_menu_shortcut(executable)
                         _publish_downloaded_update(tag, executable)

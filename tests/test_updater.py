@@ -5,8 +5,10 @@ import pytest
 
 from app import updater
 from app.updater import (
+    DOWNLOAD_CHUNK_BYTES,
     UpdateError,
     _install_executable,
+    download_executable,
     cache_running_executable,
     current_install,
     expected_sha256,
@@ -64,7 +66,8 @@ def test_prepare_latest_downloads_only_after_checksum_verification(tmp_path, mon
         "tag": "v2.0.0", "executable_url": "https://github.com/example/GiftStream.exe",
         "checksum_url": "https://github.com/example/checksums",
     })
-    monkeypatch.setattr(updater, "_open", lambda url, timeout=15: payload if url.endswith("GiftStream.exe") else manifest)
+    monkeypatch.setattr(updater, "_open", lambda url, timeout=15: manifest)
+    monkeypatch.setattr(updater, "download_executable", lambda url, on_progress=None: payload)
     tag, exe, updated, _message = prepare_latest("owner/repo", tmp_path)
     assert (tag, updated, exe.read_bytes()) == ("v2.0.0", True, payload)
 
@@ -97,3 +100,66 @@ def test_starting_the_current_release_does_not_download_it_again(tmp_path, monke
     tag, executable, updated, message = prepare_latest("owner/repo", tmp_path)
     assert (tag, executable, updated) == ("v2.0.0", installed, False)
     assert "najnowszą wersję" in message
+
+
+def test_executable_download_uses_verified_parallel_http_ranges(monkeypatch):
+    payload = b"MZ" + b"x" * (DOWNLOAD_CHUNK_BYTES + 123)
+    requests = []
+
+    class Response:
+        def __init__(self, status, body, content_range=""):
+            self.status = status
+            self.headers = {"Content-Range": content_range}
+            self._body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def getcode(self):
+            return self.status
+
+        def read(self, size=-1):
+            return self._body if size < 0 else self._body[:size]
+
+    def fake_urlopen(request, timeout=0):
+        value = request.headers.get("Range") or request.get_header("Range")
+        assert value
+        requests.append(value)
+        if value == "bytes=0-0":
+            return Response(206, payload[:1], f"bytes 0-0/{len(payload)}")
+        start, end = (int(part) for part in value.removeprefix("bytes=").split("-"))
+        return Response(206, payload[start:end + 1], f"bytes {start}-{end}/{len(payload)}")
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen)
+    progress = []
+    result = download_executable("https://github.com/example/GiftStream.exe", lambda value, _msg: progress.append(value))
+    assert result == payload
+    assert requests[0] == "bytes=0-0"
+    assert len(requests) == 3
+    assert progress[-1] == 100
+
+
+def test_executable_download_falls_back_when_server_ignores_range(monkeypatch):
+    payload = b"MZ" + b"x" * 4096
+
+    class Response:
+        status = 200
+        headers = {"Content-Length": str(len(payload))}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def getcode(self):
+            return self.status
+
+        def read(self, size=-1):
+            return payload if size < 0 else payload[:size]
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", lambda *_args, **_kwargs: Response())
+    assert download_executable("https://github.com/example/GiftStream.exe") == payload

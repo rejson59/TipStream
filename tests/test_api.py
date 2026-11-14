@@ -251,6 +251,8 @@ def test_update_check_can_be_requested_and_reports_completion():
     assert first["ok"] is True
     assert first["checking"] is True
     assert first["check_id"] == 1
+    update_state.report_progress(43, "Pobieranie aktualizacji: 43%")
+    assert client.get("/api/updates/status").json()["progress"] == 43
     second = client.post("/api/updates/check").json()
     assert second["check_id"] == first["check_id"]
     update_state.finish_check("Masz najnowszą wersję.")
@@ -333,6 +335,13 @@ def test_rule_editor_has_searchable_gift_picker_and_audio_upload_controls():
     assert 'id="rule-sound-choice"' in page
     assert 'id="sound-file"' in page
     assert 'id="upload-sound"' in page
+    assert 'data-sound-search="Heaven Jumpstyle"' in page
+    assert 'data-sound-search="X-Cool Ultra Slowed"' in page
+    assert page.count('data-sound-search=') == 11
+    app_js = TestClient(main.app).get('/static/app.js').text
+    assert 'MAX_SOUND_CLIP_SECONDS=12' in app_js
+    assert 'nic nie pobiera ani nie ustawia automatycznie' in page
+    assert 'cena nieudostępniona' in page
     assert 'id="parkour-test-action"' in page
     assert 'id="parkour-test-button"' in page
     assert 'value="arena"' in page
