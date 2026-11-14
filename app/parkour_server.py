@@ -597,6 +597,8 @@ class ParkourServer:
         self._next_rcon_probe_at = 0.0
         self._rcon_retry_delay = 1.0
         self._last_status_ready: bool | None = None
+        self._last_status_snapshot: dict[str, Any] | None = None
+        self._status_lock = threading.RLock()
         self._last_logged_exit: int | None = None
 
     def settings(self) -> dict[str, Any]:
@@ -822,6 +824,7 @@ class ParkourServer:
                 "-jar", str(jar), "nogui",
             ], **kwargs)
             self._process_started_at = time.monotonic()
+            self._last_status_snapshot = None
             self._next_rcon_probe_at = self._process_started_at + _SERVER_STARTUP_GRACE_SEC
             self._rcon_retry_delay = 1.0
             self._last_logged_exit = None
@@ -875,10 +878,18 @@ class ParkourServer:
         return result
 
     def status(self) -> dict[str, Any]:
+        # Polls can arrive from the dashboard and action endpoints concurrently.
+        # Serialize probe/backoff/cache updates so a slow stale poll cannot overwrite
+        # a newer successful RCON result.
+        with self._status_lock:
+            return self._read_status()
+
+    def _read_status(self) -> dict[str, Any]:
         state = self.settings()
         clients = _running_minecraft_clients()
         client_info = {"minecraft_client_running": bool(clients), "minecraft_clients": clients}
         if not state:
+            self._last_status_snapshot = None
             return {"configured": False, "running": False, "ready": False,
                     "server_address": "localhost:25565", "players_online": 0, "players": [],
                     **client_info,
@@ -906,6 +917,7 @@ class ParkourServer:
                                   code, Path(str(state.get("server_dir", ""))) / "giftstream-server.log")
                 self._last_logged_exit = code
             self._last_status_ready = False
+            self._last_status_snapshot = None
             return response
         now = time.monotonic()
         process_running = self._process is not None and self._process.poll() is None
@@ -917,7 +929,13 @@ class ParkourServer:
             response["message"] = "Minecraft uruchamia świat i rejestry…"
             return response
         if now < self._next_rcon_probe_at:
-            response["message"] = "Minecraft uruchamia się — czekam na RCON."
+            # Keep the last authoritative RCON result during the short poll interval.
+            # Otherwise a dashboard polling every two seconds can repeatedly land just
+            # before the next probe and display a false "waiting for RCON" state.
+            if self._last_status_snapshot is not None:
+                return {**self._last_status_snapshot, **client_info}
+            retry_in = max(1, int(self._next_rcon_probe_at - now + 0.999))
+            response["message"] = f"Minecraft jest skonfigurowany; ponowna kontrola RCON za {retry_in} s."
             return response
         try:
             listing = self._rcon("list", log_failure=False)
@@ -939,17 +957,23 @@ class ParkourServer:
                              "players": players,
                              "message": "Minecraft gotowy · " + (listing or "RCON połączony")})
             self._rcon_retry_delay = 1.0
-            self._next_rcon_probe_at = now + 2.0
+            # The dashboard polls more often than this; serve the cached ready result
+            # between probes to avoid opening a fresh RCON socket on every refresh.
+            self._next_rcon_probe_at = now + 4.0
             if self._last_status_ready is not True:
                 diagnostics.info("Serwer Minecraft jest gotowy i odpowiada przez RCON (%s).", state.get("server_address", "localhost:25565"))
             self._last_status_ready = True
+            self._last_status_snapshot = dict(response)
         except Exception as exc:
             response["running"] = process_running
             self._next_rcon_probe_at = now + self._rcon_retry_delay
+            retry_in = max(1, int(self._rcon_retry_delay + 0.999))
             self._rcon_retry_delay = min(8.0, self._rcon_retry_delay * 1.7)
+            response["message"] = f"Serwer działa, ale RCON nie odpowiada; ponawiam za {retry_in} s. ({exc})"
             if self._last_status_ready is not False:
                 diagnostics.warning("Serwer Minecraft nie jest jeszcze gotowy przez RCON: %s", exc)
             self._last_status_ready = False
+            self._last_status_snapshot = dict(response)
         return response
 
     def stop(self) -> dict[str, Any]:
@@ -979,6 +1003,7 @@ class ParkourServer:
             diagnostics.error("Nie udało się zatrzymać Minecraft przez RCON: %s", exc, exc_info=exc)
             raise RuntimeError(f"Nie udało się zatrzymać serwera przez RCON: {exc}") from exc
         self._last_status_ready = False
+        self._last_status_snapshot = None
         return {**self.status(), "message": "Wysłano polecenie bezpiecznego zamknięcia serwera."}
 
     def command(self, command: str) -> str:

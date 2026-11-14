@@ -393,6 +393,8 @@ def test_rule_editor_has_searchable_gift_picker_and_audio_upload_controls():
     assert page.count('data-sound-search=') == 11
     app_js = TestClient(main.app).get('/static/app.js').text
     assert "lang:window.GiftStreamI18n?.getLang()||'pl'" in app_js
+    assert 'parkourStatusInFlight' in app_js
+    assert 'request===parkourStatusSequence' in app_js
     assert 'MAX_SOUND_CLIP_SECONDS=12' in app_js
     assert TestClient(main.app).get('/static/i18n.js').status_code == 200
     assert 'nic nie pobiera ani nie ustawia automatycznie' in page

@@ -459,6 +459,59 @@ def test_concurrent_start_requests_spawn_only_one_server_process(monkeypatch, tm
     assert all(result["running"] and not result["ready"] for result in results)
 
 
+def test_status_keeps_cached_rcon_ready_result_during_poll_cooldown(monkeypatch, tmp_path):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from app import parkour_server
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"server_dir": str(tmp_path), "rcon_host": "127.0.0.1",
+                                    "rcon_port": 25575, "rcon_password": "secret"}), encoding="utf-8")
+    monkeypatch.setattr(parkour_server, "SETTINGS_PATH", settings)
+    monkeypatch.setattr(parkour_server, "_running_minecraft_clients", lambda: [])
+    server = ParkourServer()
+    commands = []
+    def fake_rcon(command, **_kwargs):
+        commands.append(command)
+        time.sleep(0.04)
+        return "There are 1 of a max of 8 players online: Streamer"
+    monkeypatch.setattr(server, "_rcon", fake_rcon)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        statuses = list(pool.map(lambda _index: server.status(), range(2)))
+    assert all(status["ready"] for status in statuses)
+    assert all(status["players"] == ["Streamer"] for status in statuses)
+    assert commands.count("list") == 1
+
+
+def test_status_reports_rcon_failure_and_preserves_retry_reason(monkeypatch, tmp_path):
+    import time
+    from app import parkour_server
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"server_dir": str(tmp_path), "rcon_host": "127.0.0.1",
+                                    "rcon_port": 25575, "rcon_password": "secret"}), encoding="utf-8")
+    monkeypatch.setattr(parkour_server, "SETTINGS_PATH", settings)
+    monkeypatch.setattr(parkour_server, "_running_minecraft_clients", lambda: [])
+    server = ParkourServer()
+    class RunningProcess:
+        @staticmethod
+        def poll():
+            return None
+    server._process = RunningProcess()
+    server._process_started_at = time.monotonic() - 30
+    calls = []
+    def fail_rcon(command, **_kwargs):
+        calls.append(command)
+        raise PermissionError("Serwer odrzucił hasło RCON.")
+    monkeypatch.setattr(server, "_rcon", fail_rcon)
+    first = server.status()
+    second = server.status()
+    assert first["running"] and not first["ready"]
+    assert "RCON nie odpowiada" in first["message"]
+    assert "odrzucił hasło" in second["message"]
+    assert calls == ["list"]
+
+
 def test_status_does_not_probe_rcon_during_server_startup_grace(monkeypatch, tmp_path):
     import time
     from app import parkour_server
