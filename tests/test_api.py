@@ -144,12 +144,26 @@ def test_non_parkour_presets_are_not_listed_or_activated():
     assert client.post("/api/presets/default/activate").status_code == 404
 
 
+def test_parkour_test_endpoint_accepts_new_actions_but_not_arbitrary_commands(monkeypatch):
+    seen = []
+
+    async def capture(action):
+        seen.append(action.action)
+
+    monkeypatch.setattr(main, "_run_parkour_action", capture)
+    client = TestClient(main.app)
+    assert client.post("/api/minecraft/parkour/action", json={"action": "parkour_jump"}).status_code == 200
+    assert seen == ["parkour_jump"]
+    assert client.post("/api/minecraft/parkour/action", json={"action": "op @a"}).status_code == 400
+
+
 def test_supported_actions_are_limited_to_parkour():
     response = TestClient(main.app).get("/api/actions")
     assert response.status_code == 200
     assert {item["id"] for item in response.json()} == {
         "parkour_push", "parkour_level_forward", "parkour_level_back",
-        "parkour_jail", "parkour_reset", "parkour_antireset",
+        "parkour_jail", "parkour_reset", "parkour_antireset", "parkour_speed",
+        "parkour_slow", "parkour_blind", "parkour_jump", "parkour_shield", "parkour_cleanse",
     }
 
 
@@ -302,6 +316,8 @@ def test_rule_editor_has_searchable_gift_picker_and_audio_upload_controls():
     assert 'id="rule-sound-choice"' in page
     assert 'id="sound-file"' in page
     assert 'id="upload-sound"' in page
+    assert 'id="parkour-test-action"' in page
+    assert 'id="parkour-test-button"' in page
 
 
 def test_gift_library_search_passes_the_name_query_to_the_catalog(monkeypatch):

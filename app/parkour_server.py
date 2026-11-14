@@ -960,6 +960,28 @@ class ParkourServer:
                 self._rcon(command)
             diagnostics.info("Przeniesiono gracza %s na obszar poziomu %s.", player, target)
             return f"Przeniesiono gracza na obszar poziomu {target}."
+        effects = {
+            "parkour_speed": ([f"effect give {player} minecraft:speed 8 1 true"], "Sprint przez 8 sekund!"),
+            "parkour_slow": ([f"effect give {player} minecraft:slowness 7 1 true"], "Spowolnienie przez 7 sekund!"),
+            "parkour_blind": ([f"effect give {player} minecraft:darkness 4 0 true"], "Ciemność przez 4 sekundy!"),
+            "parkour_jump": ([f"effect give {player} minecraft:jump_boost 4 2 true",
+                              f"effect give {player} minecraft:slow_falling 6 0 true"],
+                             "Wysoki skok — bezpieczne lądowanie!"),
+            "parkour_shield": ([f"effect give {player} minecraft:resistance 6 1 true"],
+                               "Tarcza odporności na 6 sekund!"),
+            "parkour_cleanse": ([f"effect clear {player} minecraft:slowness",
+                                 f"effect clear {player} minecraft:darkness",
+                                 f"effect clear {player} minecraft:blindness",
+                                 f"effect clear {player} minecraft:nausea",
+                                 f"effect clear {player} minecraft:weakness"],
+                                "Usunięto negatywne efekty!"),
+        }
+        if action in effects:
+            commands, message = effects[action]
+            for command in commands:
+                self._rcon(command)
+            diagnostics.info("Zastosowano efekt Parkour '%s' dla gracza %s.", action, player)
+            return message
         if action == "parkour_jail":
             commands = [f"tp {player} 1001 101 1001",
                         "fill 1000 100 1000 1002 100 1002 minecraft:stone",

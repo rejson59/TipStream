@@ -250,6 +250,28 @@ def test_push_action_uses_a_small_local_knockback_and_validates_player(monkeypat
         server.execute_action("parkour_push", "bad player")
 
 
+@pytest.mark.parametrize(("action", "commands", "message"), [
+    ("parkour_speed", ["effect give Streamer minecraft:speed 8 1 true"], "Sprint przez 8 sekund!"),
+    ("parkour_slow", ["effect give Streamer minecraft:slowness 7 1 true"], "Spowolnienie przez 7 sekund!"),
+    ("parkour_blind", ["effect give Streamer minecraft:darkness 4 0 true"], "Ciemność przez 4 sekundy!"),
+    ("parkour_jump", ["effect give Streamer minecraft:jump_boost 4 2 true",
+                       "effect give Streamer minecraft:slow_falling 6 0 true"], "Wysoki skok — bezpieczne lądowanie!"),
+    ("parkour_shield", ["effect give Streamer minecraft:resistance 6 1 true"], "Tarcza odporności na 6 sekund!"),
+    ("parkour_cleanse", ["effect clear Streamer minecraft:slowness", "effect clear Streamer minecraft:darkness",
+                         "effect clear Streamer minecraft:blindness", "effect clear Streamer minecraft:nausea",
+                         "effect clear Streamer minecraft:weakness"], "Usunięto negatywne efekty!"),
+])
+def test_new_parkour_gameplay_actions_are_bounded_and_rcon_safe(monkeypatch, action, commands, message):
+    server = ParkourServer()
+    sent = []
+    monkeypatch.setattr(server, "settings", lambda: {"player": "Streamer"})
+    monkeypatch.setattr(server, "_rcon", lambda command: sent.append(command) or "ok")
+    assert server.execute_action(action) == message
+    assert sent == commands
+    with pytest.raises(ValueError, match="nick gracza Minecraft"):
+        server.execute_action(action, "bad player")
+
+
 def test_chat_relay_encodes_text_as_tellraw_json_without_modifying_it(monkeypatch):
     server = ParkourServer()
     commands = []
@@ -265,7 +287,8 @@ def test_chat_relay_encodes_text_as_tellraw_json_without_modifying_it(monkeypatc
 def test_parkour_action_allowlist_is_fixed():
     from app.models import KNOWN_ACTIONS
     assert {"parkour_push", "parkour_level_forward", "parkour_level_back", "parkour_jail",
-            "parkour_reset", "parkour_antireset"}.issubset(KNOWN_ACTIONS)
+            "parkour_reset", "parkour_antireset", "parkour_speed", "parkour_slow",
+            "parkour_blind", "parkour_jump", "parkour_shield", "parkour_cleanse"}.issubset(KNOWN_ACTIONS)
 
 
 def test_map_datapack_migration_fixes_modifier_json_and_adds_level_timer_hud(tmp_path):

@@ -145,4 +145,6 @@ GIFT_CATALOG: list[dict[str, Any]] = [
 KNOWN_ACTIONS: list[str] = [
     "parkour_push", "parkour_level_forward", "parkour_level_back",
     "parkour_jail", "parkour_reset", "parkour_antireset",
+    "parkour_speed", "parkour_slow", "parkour_blind", "parkour_jump",
+    "parkour_shield", "parkour_cleanse",
 ]

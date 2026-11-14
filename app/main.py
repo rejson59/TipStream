@@ -773,7 +773,7 @@ async def parkour_chat_relay(req: ParkourChatRelayRequest) -> dict[str, Any]:
 
 @app.post("/api/minecraft/parkour/action")
 async def parkour_test_action(req: ParkourActionRequest) -> dict[str, Any]:
-    allowed = {"parkour_push", "parkour_level_forward", "parkour_level_back", "parkour_jail", "parkour_reset", "parkour_antireset"}
+    allowed = {"parkour_push", "parkour_level_forward", "parkour_level_back", "parkour_jail", "parkour_reset", "parkour_antireset", "parkour_speed", "parkour_slow", "parkour_blind", "parkour_jump", "parkour_shield", "parkour_cleanse"}
     if req.action not in allowed:
         raise HTTPException(400, "Nieznana akcja parkour.")
     await _run_parkour_action(GameAction(action=req.action, params={"player": req.player} if req.player else {}))
@@ -789,6 +789,12 @@ async def actions() -> list[dict]:
         "parkour_jail": "Parkour: więzienie",
         "parkour_reset": "Parkour: reset za 60 s",
         "parkour_antireset": "Parkour: anty-reset",
+        "parkour_speed": "Parkour: sprint · 8 s",
+        "parkour_slow": "Parkour: spowolnienie · 7 s",
+        "parkour_blind": "Parkour: ciemność · 4 s",
+        "parkour_jump": "Parkour: wysoki skok · 4 s",
+        "parkour_shield": "Parkour: tarcza · 6 s",
+        "parkour_cleanse": "Parkour: usuń negatywne efekty",
     }
     return [{"id": action, "label": labels[action]} for action in KNOWN_ACTIONS]
 

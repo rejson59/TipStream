@@ -32,6 +32,8 @@ The sole built-in preset maps:
 - Lion (at least 1,000 Coins) to cancel the countdown;
 - Follow to a 20-second jail.
 
+The rule editor also offers six timed audience effects: **Sprint** (speed for 8 s), **Slow** (slowness for 7 s), **Darkness** (4 s), **High jump** (jump boost plus slow falling), **Shield** (resistance for 6 s), and **Cleanse** (clears selected negative effects without removing other buffs). They affect only the configured local player and expire automatically. Assign any gift/event to these actions in **Reguły Parkour**. In the Minecraft panel, start the server, enable Parkour control, then use **Testuj akcję** to try an effect locally without waiting for a LIVE event.
+
 Rules can be edited in GiftStream. Coin thresholds use only an explicit coin price from TikTok's gift catalog. If a catalog entry exposes only `diamond_count` or has no verified coin price, the coin-based rule will not fire for that gift. TikTok gift catalog data and prices can vary by region.
 
 ## Optional TikTok chat relay
