@@ -1,3 +1,6 @@
+from pathlib import Path
+import re
+
 from fastapi.testclient import TestClient
 
 from app import main
@@ -168,6 +171,12 @@ def test_parkour_test_endpoint_accepts_new_actions_but_not_arbitrary_commands(mo
     assert "RCON password rejected" in failed.json()["detail"]
     assert client.post("/api/minecraft/parkour/action", json={"action": "dropper_reset"}).status_code == 400
     assert client.post("/api/minecraft/parkour/action", json={"action": "op @a"}).status_code == 400
+
+
+def test_minecraft_mode_title_update_cannot_remove_status_pill():
+    html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text(encoding="utf-8")
+    assert re.search(r'<div class="panel-title" id="minecraft-mode-title">[^<]*</div>', html)
+    assert re.search(r'<span class="pill [^"]*" id="parkour-pill">', html)
 
 
 def test_parkour_test_action_requires_ready_server_and_online_player(monkeypatch):
