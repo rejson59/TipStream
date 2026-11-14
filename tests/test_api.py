@@ -147,16 +147,42 @@ def test_non_parkour_presets_are_not_listed_or_activated():
 def test_parkour_test_endpoint_accepts_new_actions_but_not_arbitrary_commands(monkeypatch):
     seen = []
 
-    async def capture(action):
-        seen.append(action.action)
+    async def capture(action, *, allow_disabled=False):
+        seen.append((action.action, allow_disabled))
 
     monkeypatch.setattr(main, "_run_parkour_action", capture)
-    monkeypatch.setattr(main.parkour_server, "settings", lambda: {"game_mode": "parkour"})
+    monkeypatch.setattr(main.parkour_server, "settings", lambda: {
+        "game_mode": "parkour", "server_dir": "local-server", "player": "Streamer", "enabled": False})
+    monkeypatch.setattr(main.parkour_server, "status", lambda: {
+        "ready": True, "players": ["Streamer"], "message": "Minecraft gotowy"})
     client = TestClient(main.app)
     assert client.post("/api/minecraft/parkour/action", json={"action": "parkour_jump"}).status_code == 200
-    assert seen == ["parkour_jump"]
+    assert seen == [("parkour_jump", True)]
+
+    async def fail_execution(_action, *, allow_disabled=False):
+        raise RuntimeError("RCON password rejected")
+
+    monkeypatch.setattr(main, "_run_parkour_action", fail_execution)
+    failed = client.post("/api/minecraft/parkour/action", json={"action": "parkour_speed"})
+    assert failed.status_code == 502
+    assert "RCON password rejected" in failed.json()["detail"]
     assert client.post("/api/minecraft/parkour/action", json={"action": "dropper_reset"}).status_code == 400
     assert client.post("/api/minecraft/parkour/action", json={"action": "op @a"}).status_code == 400
+
+
+def test_parkour_test_action_requires_ready_server_and_online_player(monkeypatch):
+    monkeypatch.setattr(main.parkour_server, "settings", lambda: {
+        "game_mode": "parkour", "server_dir": "local-server", "player": "Streamer"})
+    client = TestClient(main.app)
+    monkeypatch.setattr(main.parkour_server, "status", lambda: {"ready": False, "message": "Czekam na RCON"})
+    response = client.post("/api/minecraft/parkour/action", json={"action": "parkour_speed"})
+    assert response.status_code == 409
+    assert "RCON" in response.json()["detail"]
+
+    monkeypatch.setattr(main.parkour_server, "status", lambda: {"ready": True, "players": ["OtherPlayer"]})
+    response = client.post("/api/minecraft/parkour/action", json={"action": "parkour_speed"})
+    assert response.status_code == 409
+    assert "nie jest online" in response.json()["detail"]
 
 
 def test_supported_actions_are_limited_to_built_in_minecraft_modes():

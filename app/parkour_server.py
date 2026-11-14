@@ -879,6 +879,7 @@ class ParkourServer:
                     "game_mode": state.get("game_mode", "parkour"),
                     "dropper_stage": self._dropper_lane(stage_value) if state.get("game_mode") == "dropper" else None,
                     "java_required": state.get("java_required"),
+                    "security_warning": "Tryb offline nie weryfikuje kont Microsoft. Serwer jest przeznaczony wyłącznie do połączeń lokalnych — nie wystawiaj portów 25565/25575 do Internetu.",
                     "chat_relay_enabled": bool(state.get("chat_relay_enabled", False)),
                     "players_online": 0, "players": [], **client_info,
                     "message": "Serwer startuje — pierwsze uruchomienie może potrwać chwilę."}

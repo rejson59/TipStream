@@ -125,10 +125,10 @@ parkour_reset_player = ""
 parkour_jail_tasks: dict[str, asyncio.Task] = {}
 
 
-async def _run_parkour_action(action: GameAction) -> None:
+async def _run_parkour_action(action: GameAction, *, allow_disabled: bool = False) -> str | None:
     global parkour_reset_task, parkour_reset_player
     settings = parkour_server.settings()
-    if not settings.get("enabled"):
+    if not settings.get("enabled") and not allow_disabled:
         diagnostics.warning("Akcja Parkour '%s' pominięta: lokalne sterowanie grą jest wyłączone lub serwer nie jest skonfigurowany.",
                             action.action)
         return
@@ -166,7 +166,7 @@ async def _run_parkour_action(action: GameAction) -> None:
             finally:
                 parkour_reset_task = None
         parkour_reset_task = asyncio.create_task(countdown())
-        return
+        return "Rozpoczęto 60-sekundowe odliczanie resetu."
     if action.action == "parkour_antireset":
         if parkour_reset_task and not parkour_reset_task.done():
             parkour_reset_task.cancel()
@@ -174,9 +174,9 @@ async def _run_parkour_action(action: GameAction) -> None:
             result = await asyncio.to_thread(parkour_server.cancel_reset, parkour_reset_player or player)
             diagnostics.info("Anulowano reset Parkour dla %s.", parkour_reset_player or player)
             await hub.publish_status({"parkour_reset_countdown": None, "parkour_result": result})
-        else:
-            diagnostics.info("Odebrano akcję anty-reset, ale nie trwało żadne odliczanie.")
-        return
+            return result
+        diagnostics.info("Odebrano akcję anty-reset, ale nie trwało żadne odliczanie.")
+        return "Nie trwa żadne odliczanie resetu do anulowania."
     if action.action == "parkour_jail":
         result = await asyncio.to_thread(parkour_server.execute_action, action.action, player)
         previous = parkour_jail_tasks.pop(player, None)
@@ -197,10 +197,11 @@ async def _run_parkour_action(action: GameAction) -> None:
                 parkour_jail_tasks.pop(player, None)
         parkour_jail_tasks[player] = asyncio.create_task(release_jail())
         await hub.publish_status({"parkour_result": result, "parkour_jail_seconds": 20})
-        return
+        return result
     if action.action.startswith(("parkour_", "dropper_")):
         result = await asyncio.to_thread(parkour_server.execute_action, action.action, player)
         await hub.publish_status({"parkour_result": result})
+        return result
 
 
 engine = Engine(on_action=publish_game_action)
@@ -775,8 +776,23 @@ async def parkour_test_action(req: ParkourActionRequest) -> dict[str, Any]:
     prefix = "dropper_" if mode == "dropper" else "parkour_"
     if req.action not in KNOWN_ACTIONS or not req.action.startswith(prefix):
         raise HTTPException(400, f"Akcja nie pasuje do aktywnego trybu {mode}.")
-    await _run_parkour_action(GameAction(action=req.action, params={"player": req.player} if req.player else {}))
-    return {"ok": True, "message": f"Akcja {mode} wysłana: {req.action}"}
+    if not state.get("server_dir"):
+        raise HTTPException(409, "Najpierw skonfiguruj lokalny serwer Minecraft.")
+    status = await asyncio.to_thread(parkour_server.status)
+    if not status.get("ready"):
+        raise HTTPException(409, status.get("message") or "Serwer Minecraft nie jest jeszcze gotowy przez RCON.")
+    player = req.player or str(state.get("player", ""))
+    if not player or player.casefold() not in {str(name).casefold() for name in status.get("players", [])}:
+        raise HTTPException(409, f"Gracz {player or '(nieustawiony)'} nie jest online na serwerze Minecraft.")
+    try:
+        # A manual test is intentionally independent of the LIVE automation toggle.
+        # That toggle controls incoming gifts; this endpoint is an explicit user action.
+        message = await _run_parkour_action(
+            GameAction(action=req.action, params={"player": player}), allow_disabled=True)
+    except Exception as exc:
+        diagnostics.warning("Test akcji Minecraft '%s' nie powiódł się: %s", req.action, exc)
+        raise HTTPException(502, f"Nie udało się wykonać akcji Minecraft: {exc}") from exc
+    return {"ok": True, "message": message or f"Akcja {req.action} wysłana dla {player}."}
 
 @app.get("/api/actions")
 async def actions() -> list[dict]:
