@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GiftStream Browser Relay</title>
+  <style>
+    body{width:310px;margin:0;padding:16px;background:#0d1714;color:#eaf5ee;font:13px system-ui,sans-serif}h1{font-size:15px;margin:0 0 12px}label{display:block;color:#a5b8af;font-size:11px;margin-bottom:5px}input{box-sizing:border-box;width:100%;padding:8px;border:1px solid #32443c;border-radius:7px;background:#08110f;color:#fff}button{margin:10px 0 0;padding:8px 10px;border:0;border-radius:7px;background:#8cf0bc;color:#082018;font-weight:700;cursor:pointer}#status{margin-top:12px;color:#b8c9c0;line-height:1.5;overflow-wrap:anywhere}.note{margin-top:10px;color:#81958a;font-size:10px;line-height:1.45}
+  </style>
+</head>
+<body>
+  <h1>GiftStream · lokalny Browser relay</h1>
+  <label for="base">Adres lokalnego GiftStream</label>
+  <input id="base" type="url" value="http://127.0.0.1:8000">
+  <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;color:#eaf5ee"><input id="trigger" type="checkbox" style="width:auto;margin:1px 0 0"><span>Uruchamiaj akcje reguł z Browser relay</span></label>
+  <div class="note">Domyślnie wyłączone: najpierw sprawdź, czy zdarzenia są poprawnie rozpoznawane. TikTokLive i Browser mogą zgłosić ten sam event.</div>
+  <button id="save">Zapisz i sprawdź</button>
+  <div id="status" role="status">Sprawdzam lokalny odbiornik…</div>
+  <div class="note">Odczytuje wyłącznie widoczne powiadomienia strony LIVE. Nie przechwytuje ruchu sieciowego, haseł ani tokenów. Odbiór zależy od układu strony TikToka.</div>
+  <script src="popup.js"></script>
+</body>
+</html>

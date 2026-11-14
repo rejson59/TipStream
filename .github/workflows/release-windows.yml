@@ -77,6 +77,9 @@ jobs:
           Copy-Item dist/GiftStream.exe release-assets/GiftStream.exe
           $hash = (Get-FileHash release-assets/GiftStream.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  GiftStream.exe" | Set-Content -Encoding ascii release-assets/checksums.txt
+          Compress-Archive -Path browser-extension\* -DestinationPath release-assets\GiftStream-Browser-Relay.zip -Force
+          $extensionHash = (Get-FileHash release-assets/GiftStream-Browser-Relay.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$extensionHash  GiftStream-Browser-Relay.zip" | Add-Content -Encoding ascii release-assets/checksums.txt
           Get-ChildItem release-assets | Select-Object Name,Length
 
       - name: Opublikuj wydanie GitHub
@@ -91,7 +94,8 @@ jobs:
               --repo $env:GITHUB_REPOSITORY `
               --clobber `
               release-assets/GiftStream.exe `
-              release-assets/checksums.txt
+              release-assets/checksums.txt `
+              release-assets/GiftStream-Browser-Relay.zip
           } else {
             gh release create $tag `
               --repo $env:GITHUB_REPOSITORY `
@@ -99,5 +103,6 @@ jobs:
               --target $env:GITHUB_SHA `
               --generate-notes `
               release-assets/GiftStream.exe `
-              release-assets/checksums.txt
+              release-assets/checksums.txt `
+              release-assets/GiftStream-Browser-Relay.zip
           }

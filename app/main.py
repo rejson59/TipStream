@@ -103,19 +103,33 @@ class ClientDiagnosticRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1500)
 
 
+class BrowserEventRequest(BaseModel):
+    event: TikTokEvent
+    trigger_actions: bool = False
+
+
 async def publish_game_action(action: GameAction) -> None:
     trigger = action.triggered_by
     trigger_hint = f" po zdarzeniu {trigger.type}" if trigger else ""
     diagnostics.info("Dopasowano regułę '%s': akcja '%s'%s.",
                      action.rule_name or "(bez nazwy)", action.action, trigger_hint)
-    await hub.publish_action(action)
-    if action.action.startswith(("parkour_", "dropper_")):
-        try:
-            await _run_parkour_action(action)
-        except Exception as exc:
-            diagnostics.error("Akcja Parkour '%s' z reguły '%s' nie powiodła się: %s",
-                              action.action, action.rule_name, exc, exc_info=exc)
-            await hub.publish_status({"parkour_result": {"ok": False, "message": str(exc)}})
+    action_id = await hub.publish_action(action)
+    if not action.action.startswith(("parkour_", "dropper_")):
+        await hub.update_action(action_id, "sent", "Wysłano do lokalnego mostka; brak potwierdzenia wykonania przez grę.")
+        return
+    try:
+        result = await _run_parkour_action(action)
+        if result is None:
+            await hub.update_action(
+                action_id, "sent",
+                "Mostek lokalny otrzymał akcję; lokalne sterowanie Minecraft jest wyłączone, więc wykonanie nie jest potwierdzone.")
+        else:
+            await hub.update_action(action_id, "succeeded", result)
+    except Exception as exc:
+        diagnostics.error("Akcja Parkour '%s' z reguły '%s' nie powiodła się: %s",
+                          action.action, action.rule_name, exc, exc_info=exc)
+        await hub.update_action(action_id, "failed", str(exc))
+        await hub.publish_status({"parkour_result": {"ok": False, "message": str(exc)}})
 
 
 hub = Hub()
@@ -207,7 +221,7 @@ async def _run_parkour_action(action: GameAction, *, allow_disabled: bool = Fals
 engine = Engine(on_action=publish_game_action)
 
 
-async def process_event(ev: TikTokEvent) -> None:
+async def process_event(ev: TikTokEvent, *, trigger_actions: bool = True) -> None:
     if ev.viewer_count:
         hub.viewer_count = ev.viewer_count
     if ev.type == "gift":
@@ -244,7 +258,8 @@ async def process_event(ev: TikTokEvent) -> None:
             except Exception as exc:
                 diagnostics.error("Nie udało się przekazać komentarza LIVE do Minecraft: %s", exc, exc_info=exc)
                 await hub.publish_status({"parkour_chat_relay_error": str(exc)})
-        await engine.handle(ev)
+        if trigger_actions:
+            await engine.handle(ev)
     except Exception as exc:
         diagnostics.error("Błąd przetwarzania zdarzenia source=%s type=%s: %s",
                           ev.source, ev.type, exc, exc_info=exc)
@@ -930,6 +945,45 @@ async def bridge_event(ev: TikTokEvent, x_giftstream_secret: str | None = Header
         raise HTTPException(401, "Invalid or missing X-GiftStream-Secret")
     await process_event(ev)
     return {"ok": True}
+
+@app.post("/api/browser/event")
+async def browser_event(req: BrowserEventRequest, request: Request) -> dict[str, Any]:
+    """Accept normalized events from a local browser helper; never expose a public ingest."""
+    remote = request.client.host if request.client else ""
+    try:
+        is_loopback = ipaddress.ip_address(remote).is_loopback
+    except ValueError:
+        is_loopback = False
+    if not is_loopback:
+        raise HTTPException(403, "Browser relay przyjmuje zdarzenia wyłącznie z tego komputera.")
+    ev = req.event
+    if ev.type == "system":
+        raise HTTPException(422, "Browser relay nie przyjmuje zdarzeń systemowych.")
+    if (len(ev.user) > 64 or len(ev.nickname) > 100 or len(ev.comment or "") > 1000
+            or len(ev.gift_name or "") > 128 or len(ev.gift_image_url or "") > 2048
+            or ev.repeat_count < 1 or ev.repeat_count > 1000
+            or ev.like_count < 0 or ev.like_count > 10_000_000
+            or ev.diamonds < 0 or ev.diamonds > 10_000_000):
+        raise HTTPException(422, "Zdarzenie z przeglądarki przekracza dozwolony rozmiar lub zakres.")
+    normalized = ev.model_copy(update={"source": "browser"})
+    await process_event(normalized, trigger_actions=req.trigger_actions)
+    return {"ok": True, "received": normalized.type,
+            "trigger_actions": req.trigger_actions,
+            "events_received": hub.browser_event_count}
+
+
+@app.get("/api/browser/status")
+async def browser_status(request: Request) -> dict[str, Any]:
+    remote = request.client.host if request.client else ""
+    try:
+        is_loopback = ipaddress.ip_address(remote).is_loopback
+    except ValueError:
+        is_loopback = False
+    if not is_loopback:
+        raise HTTPException(403, "Browser relay jest dostępny wyłącznie lokalnie.")
+    return {"events_received": hub.browser_event_count,
+            "last_event_at": hub.browser_last_event_at or None}
+
 
 @app.post("/api/bridge/action")
 async def bridge_action(data: dict) -> dict:

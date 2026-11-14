@@ -10,6 +10,7 @@ import asyncio
 import json
 import socket
 import time
+import uuid
 from pathlib import Path
 
 from fastapi import WebSocket
@@ -36,6 +37,8 @@ class Hub:
         self.total_gifts = 0
         self.viewer_count = 0
         self.total_likes = 0
+        self.browser_event_count = 0
+        self.browser_last_event_at = 0.0
 
     async def _broadcast(self, clients: set[WebSocket], payload: dict) -> None:
         dead = []
@@ -50,6 +53,9 @@ class Hub:
     async def publish_event(self, ev: TikTokEvent) -> None:
         data = ev.model_dump()
         data["ts"] = time.time()
+        if ev.source == "browser":
+            self.browser_event_count += 1
+            self.browser_last_event_at = data["ts"]
         if ev.type == "gift":
             diamonds, from_catalog = resolve_diamonds(ev.gift_id, ev.gift_name, ev.diamonds)
             data["earning_diamonds"] = diamonds
@@ -71,8 +77,12 @@ class Hub:
         await self._broadcast(self.feed_clients, {"kind": "event", "data": data})
         await self._broadcast(self.game_clients, {"kind": "event", "data": data})
 
-    async def publish_action(self, ga: GameAction) -> None:
+    async def publish_action(self, ga: GameAction) -> str:
         data = ga.model_dump()
+        action_id = uuid.uuid4().hex
+        data.update({"action_id": action_id, "execution_status": "pending",
+                     "execution_message": "Dopasowano regułę; oczekiwanie na wynik wykonania.",
+                     "execution_updated_at": time.time()})
         self.recent_actions.append(data)
         self.recent_actions = self.recent_actions[-200:]
         await self._broadcast(self.feed_clients, {"kind": "action", "data": data})
@@ -84,6 +94,23 @@ class Hub:
                 f.write(json.dumps(data, ensure_ascii=False) + "\n")
         except Exception as exc:
             diagnostics.warning("Nie udało się dopisać akcji do lokalnego dziennika JSONL: %s", exc)
+        return action_id
+
+    async def update_action(self, action_id: str, status: str, message: str) -> None:
+        """Update the dashboard audit record without re-dispatching the game action."""
+        update = {"action_id": action_id, "execution_status": status,
+                  "execution_message": str(message)[:1000], "execution_updated_at": time.time()}
+        action = next((item for item in reversed(self.recent_actions)
+                       if item.get("action_id") == action_id), None)
+        if action is None:
+            return
+        action.update(update)
+        await self._broadcast(self.feed_clients, {"kind": "action_status", "data": update})
+        try:
+            with EVENTS_FILE.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"record_type": "action_status", **update}, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            diagnostics.warning("Nie udało się zapisać wyniku akcji do dziennika JSONL: %s", exc)
 
     async def publish_status(self, status: dict) -> None:
         await self._broadcast(self.feed_clients, {"kind": "status", "data": status})
@@ -105,6 +132,8 @@ class Hub:
         self.total_gifts = 0
         self.viewer_count = 0
         self.total_likes = 0
+        self.browser_event_count = 0
+        self.browser_last_event_at = 0.0
 
     async def broadcast_snapshot(self) -> None:
         await self._broadcast(self.feed_clients, {"kind": "snapshot", "data": self.snapshot()})
@@ -119,6 +148,8 @@ class Hub:
             "total_gifts": self.total_gifts,
             "viewer_count": self.viewer_count,
             "total_likes": self.total_likes,
+            "browser_bridge": {"events_received": self.browser_event_count,
+                               "last_event_at": self.browser_last_event_at or None},
         }
 
 
