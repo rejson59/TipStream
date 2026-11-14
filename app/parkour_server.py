@@ -869,12 +869,15 @@ class ParkourServer:
                     **client_info,
                     "message": "Utwórz lokalny serwer i zaimportuj mapę 100 Levels."}
         _disable_server_whitelist(Path(str(state.get("server_dir", ""))) / "server.properties")
+        stage_map = state.get("dropper_player_levels", {})
+        stage_value = stage_map.get(str(state.get("player", "")), 1) if isinstance(stage_map, dict) else 1
         response = {"configured": True, "running": False, "ready": False,
                     "server_address": state.get("server_address", "localhost:25565"),
                     "server_dir": state.get("server_dir", ""), "player": state.get("player", ""),
                     "minecraft_version": state.get("minecraft_version", MAP_VERSION),
                     "map_version": state.get("map_version", MAP_VERSION),
                     "game_mode": state.get("game_mode", "parkour"),
+                    "dropper_stage": self._dropper_lane(stage_value) if state.get("game_mode") == "dropper" else None,
                     "java_required": state.get("java_required"),
                     "chat_relay_enabled": bool(state.get("chat_relay_enabled", False)),
                     "players_online": 0, "players": [], **client_info,
@@ -982,10 +985,14 @@ class ParkourServer:
         return max(1, min(5, int(stage)))
 
     def _dropper_teleport(self, player: str, stage: int) -> None:
-        lane = self._dropper_lane(stage) - 1
+        stage = self._dropper_lane(stage)
+        lane = stage - 1
         x = lane * 18 + 4
         self._rcon(f"tp {player} {x} 127 4")
         self._rcon(f"effect give {player} minecraft:slow_falling 3 0 true")
+        title = json.dumps({"text": f"DROPPER · SZYB {stage}/5", "color": "aqua", "bold": True},
+                           ensure_ascii=False, separators=(",", ":"))
+        self._rcon(f"title {player} actionbar {title}")
 
     def initialize_dropper_map(self) -> None:
         """Build a compact five-stage vanilla Dropper arena once, without third-party plugins."""
@@ -993,11 +1000,13 @@ class ParkourServer:
         if state.get("game_mode") != "dropper" or state.get("dropper_map_initialized"):
             return
         diagnostics.info("Buduję pięć szybów Droppera w świecie vanilla.")
-        for index in range(5):
+        lane_glass = ("orange_stained_glass", "cyan_stained_glass", "magenta_stained_glass",
+                      "lime_stained_glass", "yellow_stained_glass")
+        for index, color in enumerate(lane_glass):
             x0 = index * 18
             x1, x2 = x0 - 1, x0 + 9
             z1, z2 = -1, 9
-            self._rcon(f"fill {x1} 65 {z1} {x2} 126 {z2} minecraft:glass")
+            self._rcon(f"fill {x1} 65 {z1} {x2} 126 {z2} minecraft:{color}")
             self._rcon(f"fill {x0} 66 0 {x0 + 8} 125 8 minecraft:air")
             self._rcon(f"fill {x0 + 3} 126 3 {x0 + 5} 126 5 minecraft:air")
             for obstacle_y, hole_x, hole_z in ((112, 1, 1), (98, 5, 1), (84, 1, 5), (72, 5, 5)):

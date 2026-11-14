@@ -548,6 +548,7 @@ def test_dropper_map_generation_is_bounded_and_idempotent(tmp_path, monkeypatch)
     assert sum(command.startswith("fill ") for command in commands) == 60
     assert any("minecraft:water" in command for command in commands)
     assert any("minecraft:glass" in command for command in commands)
+    assert any("minecraft:orange_stained_glass" in command for command in commands)
     server.initialize_dropper_map()
     assert len(commands) == 66
 
@@ -567,3 +568,4 @@ def test_dropper_level_actions_clamp_and_persist_stage(tmp_path, monkeypatch):
     assert "szybu 4 z 5" in server.execute_action("dropper_level_back")
     assert state["dropper_player_levels"]["Streamer"] == 4
     assert "tp Streamer 58 127 4" in commands
+    assert any('DROPPER · SZYB 4/5' in command for command in commands)
