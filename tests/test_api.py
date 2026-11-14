@@ -217,16 +217,29 @@ def test_live_audio_preferences_are_persisted_without_exposing_secrets(monkeypat
     assert TestClient(main.app).put("/api/config", json={"sound_url": "https://localhost/alert.mp3"}).status_code == 422
     saved_sound = TestClient(main.app).put("/api/config", json={
         "sound_url": "https://sounds.example.org/alert.mp3", "sound_label": "Test sound",
-        "overlay_template": "spotlight", "overlay_theme": "violet", "overlay_accent": "#c4a7ff",
-        "overlay_scale": 1.15, "overlay_title": "MY LIVE", "overlay_fields": "gifts,actions",
+        "overlay_template": "arena", "overlay_theme": "violet", "overlay_accent": "#c4a7ff",
+        "overlay_scale": 1.15, "overlay_opacity": 0.42, "overlay_density": "bold",
+        "overlay_canvas": "portrait",
+        "overlay_positions_portrait": {"brand": {"x": 4, "y": 3, "w": 90, "h": 9}},
+        "overlay_title": "MY LIVE", "overlay_fields": "gifts,actions,likes,leaderboard",
     })
     assert saved_sound.status_code == 200
     assert saved_sound.json()["sound_url"] == "https://sounds.example.org/alert.mp3"
     assert saved_sound.json()["sound_label"] == "Test sound"
-    assert saved_sound.json()["overlay_template"] == "spotlight"
+    assert saved_sound.json()["overlay_template"] == "arena"
     assert saved_sound.json()["overlay_theme"] == "violet"
     assert saved_sound.json()["overlay_scale"] == 1.15
+    assert saved_sound.json()["overlay_opacity"] == 0.42
+    assert saved_sound.json()["overlay_density"] == "bold"
+    assert saved_sound.json()["overlay_canvas"] == "portrait"
+    assert saved_sound.json()["overlay_positions_portrait"]["brand"] == {"x": 4.0, "y": 3.0, "w": 90.0, "h": 9.0}
+    assert saved_sound.json()["overlay_positions_landscape"]["center"] == {"x": 35.0, "y": 18.0, "w": 30.0, "h": 54.0}
+    assert saved_sound.json()["overlay_fields"] == "gifts,actions,likes,leaderboard"
     assert TestClient(main.app).put("/api/config", json={"overlay_accent": "red"}).status_code == 422
+    assert TestClient(main.app).put("/api/config", json={"overlay_opacity": 1.2}).status_code == 422
+    assert TestClient(main.app).put("/api/config", json={
+        "overlay_positions_landscape": {"left": {"x": 90, "y": 10, "w": 20, "h": 50}}
+    }).status_code == 422
 
 
 def test_update_check_can_be_requested_and_reports_completion():
@@ -322,6 +335,9 @@ def test_rule_editor_has_searchable_gift_picker_and_audio_upload_controls():
     assert 'id="upload-sound"' in page
     assert 'id="parkour-test-action"' in page
     assert 'id="parkour-test-button"' in page
+    assert 'value="arena"' in page
+    assert 'id="overlay-opacity"' in page
+    assert 'data-overlay-field="leaderboard"' in page
     assert 'id="parkour-game-mode"' in page
     assert 'Minecraft Dropper · 5 szybów' in page
 
@@ -346,3 +362,20 @@ def test_dropper_preset_is_persisted_separately_from_parkour(monkeypatch, tmp_pa
     assert (tmp_path / "minecraft-dropper.json").is_file()
     assert presets.get_preset("minecraft-dropper").rules[0].action.type == "dropper_push"
     assert presets.get_preset("minecraft-parkour") is None
+
+
+def test_overlay_arena_template_serves_editable_transparent_hud():
+    response = TestClient(main.app).get("/overlay?template=arena&opacity=0.4&density=bold")
+    assert response.status_code == 200
+    assert 'id="arena-overlay"' in response.text
+    assert 'id="arena-gifts"' in response.text
+    assert '/static/overlay.css' in response.text
+    assert '/static/overlay.js' in response.text
+    assert 'data-arena-widget="brand"' in response.text
+    assert 'data-arena-widget="gifts"' in response.text
+    css = TestClient(main.app).get('/static/overlay.css')
+    js = TestClient(main.app).get('/static/overlay.js')
+    assert css.status_code == js.status_code == 200
+    assert '--overlay-opacity' in css.text
+    assert 'giftstream-overlay-position' in js.text
+    assert '.arena-density-bold' in css.text

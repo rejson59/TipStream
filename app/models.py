@@ -8,7 +8,7 @@ Odpowiadają strukturze StreamToEarn:
 from __future__ import annotations
 
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +98,23 @@ class GameAction(BaseModel):
 # Konfiguracja aplikacji
 # ---------------------------------------------------------------------------
 
+class OverlayWidgetPosition(BaseModel):
+    """Normalized widget geometry in percentages of the OBS canvas."""
+    x: float = Field(ge=0, le=100)
+    y: float = Field(ge=0, le=100)
+    w: float = Field(ge=8, le=100)
+    h: float = Field(ge=5, le=100)
+
+    @model_validator(mode="after")
+    def stays_within_canvas(self) -> "OverlayWidgetPosition":
+        if self.x + self.w > 100 or self.y + self.h > 100:
+            raise ValueError("Widget must fit inside the overlay canvas")
+        return self
+
+
+OverlayWidget = Literal["brand", "mode", "left", "center", "right", "gifts"]
+
+
 class AppConfig(BaseModel):
     tiktok_username: str = ""
     # `simulator` remains accepted only to migrate older config.json files.
@@ -109,12 +126,31 @@ class AppConfig(BaseModel):
     sound_volume: float = Field(default=0.55, ge=0.0, le=1.0)
     sound_url: str = ""
     sound_label: str = Field(default="", max_length=100)
-    overlay_template: Literal["grid", "list", "minimal", "streamer", "ticker", "spotlight"] = "grid"
+    overlay_template: Literal["grid", "list", "minimal", "streamer", "ticker", "spotlight", "arena"] = "grid"
     overlay_theme: Literal["mint", "violet", "amber", "ocean"] = "mint"
     overlay_accent: str = Field(default="#8cf0bc", pattern=r"^#[0-9A-Fa-f]{6}$")
     overlay_scale: float = Field(default=1.0, ge=0.7, le=1.4)
+    overlay_opacity: float = Field(default=0.72, ge=0.15, le=0.95)
+    overlay_density: Literal["compact", "balanced", "bold"] = "balanced"
+    overlay_canvas: Literal["landscape", "portrait"] = "landscape"
+    overlay_positions_landscape: dict[OverlayWidget, OverlayWidgetPosition] = Field(default_factory=lambda: {
+        "brand": OverlayWidgetPosition(x=2, y=2, w=28, h=9),
+        "mode": OverlayWidgetPosition(x=70, y=2, w=28, h=9),
+        "left": OverlayWidgetPosition(x=2, y=16, w=25, h=62),
+        "center": OverlayWidgetPosition(x=35, y=18, w=30, h=54),
+        "right": OverlayWidgetPosition(x=73, y=16, w=25, h=62),
+        "gifts": OverlayWidgetPosition(x=2, y=82, w=96, h=16),
+    })
+    overlay_positions_portrait: dict[OverlayWidget, OverlayWidgetPosition] = Field(default_factory=lambda: {
+        "brand": OverlayWidgetPosition(x=3, y=2, w=94, h=8),
+        "mode": OverlayWidgetPosition(x=3, y=11, w=94, h=7),
+        "left": OverlayWidgetPosition(x=3, y=42, w=46, h=35),
+        "center": OverlayWidgetPosition(x=10, y=20, w=80, h=20),
+        "right": OverlayWidgetPosition(x=51, y=42, w=46, h=35),
+        "gifts": OverlayWidgetPosition(x=3, y=80, w=94, h=18),
+    })
     overlay_title: str = Field(default="", max_length=60)
-    overlay_fields: str = Field(default="earnings,gifts,actions,viewers", max_length=80)
+    overlay_fields: str = Field(default="earnings,gifts,actions,viewers,likes,leaderboard", max_length=160)
     bridge_webhook_secret: str = ""
 
 

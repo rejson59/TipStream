@@ -42,6 +42,12 @@ The rule editor also offers six timed audience effects: **Sprint** (speed for 8 
 
 Rules can be edited in GiftStream. Coin thresholds use only an explicit coin price from TikTok's gift catalog. If a catalog entry exposes only `diamond_count` or has no verified coin price, the coin-based rule will not fire for that gift. TikTok gift catalog data and prices can vary by region.
 
+## Transparent LIVE Arena overlay
+
+In **Nakładka OBS**, choose **LIVE Arena** for a stream HUD inspired by Minecraft gift overlays. It composes the active rule set into left/right gift-action cards, places live counters and the current top donor in the center, and shows the latest real gifts in a bottom strip. The page background remains transparent, so Minecraft footage stays visible behind the modules. It reports actual LIVE connection state and actual session counts; it does not invent win/loss points or viewer activity. Choose landscape (16:9) or portrait (9:16), then use **Przesuń elementy** in the preview to drag modules; pull the lower-right handle to resize. Positions are saved independently per canvas and included in the shareable OBS URL.
+
+The overlay editor can hide/show counters, rules, gift strip and top donor, set accent/theme and custom title, and adjust scale, card opacity and density. It adapts to wide and portrait Browser Source canvases. When styling is changed, copy the refreshed URL into OBS/TikTok LIVE Studio if the source does not reload its address automatically. Use the transparency checker in the editor preview to judge card opacity before going live.
+
 ## Optional TikTok chat relay
 
 The option **Przekazuj komentarze TikTok LIVE do czatu Minecraft bez zmian** is off by default. When enabled, GiftStream passes the comment text as a JSON-escaped `tellraw` component. It does not prefix a username, trim or otherwise rewrite the message, and never interprets the message as a Minecraft command. The relay is best-effort: it only handles comments actually received by the unofficial TikTokLive connector, and messages over 2,000 characters are rejected rather than truncated.

@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
@@ -669,7 +670,7 @@ async def update_config(data: dict[str, Any]) -> dict:
     try:
         config = AppConfig(**merged)
     except ValidationError as exc:
-        raise HTTPException(422, detail=exc.errors()) from exc
+        raise HTTPException(422, detail=jsonable_encoder(exc.errors())) from exc
     save_config()
     diagnostics.info("Zaktualizowano ustawienia panelu GiftStream.")
     return public_config()

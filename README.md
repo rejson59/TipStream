@@ -12,7 +12,7 @@
 - **Nieoficjalny** konektor TikTokLive. GiftStream nie generuje fikcyjnych zdarzeń ani liczników; uruchamia się rozłączony i czeka na ręczne połączenie kanału. Przy zmianie nazwy kanału najpierw zatrzymuje poprzednie połączenie i zeruje statystyki, a potem zaczyna zbierać zdarzenia nowego LIVE. Połączenie zależy od aktualnej dostępności biblioteki i TikToka; GiftStream ponawia zerwane połączenia z czytelnym statusem i rosnącym odstępem, rozpoznaje kanał offline i sprawdza go ponownie co 2–5 minut, a przy limicie usługi podpisującej wstrzymuje bezcelowe próby.
 - Diagnostyka obejmuje połączenia, wejściowe zdarzenia, reguły i akcje Parkour, instalację Java/serwera/mapy, RCON, błędy API oraz błędy interfejsu; logi JVM serwera są dołączane do panelu Minecraft. Logi można kopiować z panelu głównego lub zakładki Minecraft; diagnostyka nie dopisuje treści komentarzy LIVE.
 - Biblioteka może przechować do 1000 giftów z bieżącego katalogu TikToka; wyszukuj prezenty po nazwie zarówno w bibliotece, jak i bezpośrednio w kreatorze reguł. Grafiki są serwowane przez bezpieczny proxy do CDN TikToka z odświeżeniem katalogu po błędzie ładowania; wpis bez dostępnej grafiki nadal pozostaje widoczny. Monety widza i diamenty twórcy są rozdzielone, a niepodane ceny nie są zgadywane.
-- Osobne studio dźwięków LIVE z wyszukiwarką MyInstants, odsłuchem i wyborem jednym kliknięciem. Można też wgrać własny plik MP3, WAV, OGG, M4A, AAC lub FLAC (do 10 MB), ustawić publiczny URL HTTPS, głośność i TTS. Wybrany dźwięk ze Studio można przypisać do konkretnej reguły. Nakładki OBS mają sześć układów oraz edytowalną paletę, kolor, skalę, tytuł i widoczne wskaźniki.
+- Osobne studio dźwięków LIVE z wyszukiwarką MyInstants, odsłuchem i wyborem jednym kliknięciem. Można też wgrać własny plik MP3, WAV, OGG, M4A, AAC lub FLAC (do 10 MB), ustawić publiczny URL HTTPS, głośność i TTS. Wybrany dźwięk ze Studio można przypisać do konkretnej reguły. Nakładki OBS mają siedem układów, w tym przezroczystą LIVE Arenę z kartami reguł, aktualnymi licznikami, top widzem i ostatnimi giftami. Arenę można konfigurować osobno dla płótna 16:9 i 9:16: przeciągaj moduły, zmieniaj ich rozmiar i udostępniaj zapisany układ w URL OBS. Edytor udostępnia także widoczność modułów, paletę, kolor akcentu, skalę, krycie kart, gęstość i tytuł; statystyki HUD-u pochodzą wyłącznie z rzeczywistych zdarzeń.
 - Alerty dźwiękowe, synteza mowy, widżety OBS oraz szacunkowa wartość nagród w PLN. Szacunek nie jest oficjalną stawką ani obietnicą wypłaty TikToka.
 
 ## Aplikacja Windows i aktualizacje
@@ -34,7 +34,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Otwórz `http://localhost:8000`. GiftStream uruchamia się rozłączony; połącz prawdziwy kanał TikTok LIVE, aby rozpocząć naliczanie statystyk. Nakładki OBS są dostępne pod `/overlay?template=grid`, `list`, `minimal` lub `streamer`.
+Otwórz `http://localhost:8000`. GiftStream uruchamia się rozłączony; połącz prawdziwy kanał TikTok LIVE, aby rozpocząć naliczanie statystyk. Nakładki OBS są dostępne pod `/overlay?template=grid`, `list`, `minimal`, `streamer`, `ticker`, `spotlight` lub `arena`; LIVE Arena ma przezroczyste tło i responsywny układ poziomy/pionowy.
 
 ## Bezpieczeństwo i ograniczenia
 
